@@ -403,5 +403,5 @@ for (i, j), cell in table.get_celld().items():
 
 # Show the figure
 if save_results:
-    fig.savefig('fig/fig00_RE_datasets_lenght.jpeg', format='jpeg', dpi=300)
+    fig.savefig('fig/fig00_RE_datasets_lenght.jpeg', format='jpeg', dpi=300, bbox_inches='tight')
 plt.show()
