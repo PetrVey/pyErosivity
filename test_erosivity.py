@@ -11,6 +11,7 @@ import matplotlib.pyplot as plt
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import mean_squared_error
 from math import sqrt
+import time
 from src.pyErosivity import remove_incomplete_years
 from src.pyErosivity import get_events 
 from src.pyErosivity import remove_short 
@@ -59,9 +60,12 @@ name_col = "vals"        # Name of column containing data to extract
 use_both_thresholds = False # True Defined erosivity event as intensity >= threshold1 & accum_prec >= threshold2
                             #False Defined erosivity event as intensity >= threshold1
                             #here we have false cause we set RIST for single threshold on intensity
+#Following setting source https://hess.copernicus.org/articles/22/6505/2018/
+thr_imax30 = 12.7         #  adjusted threshold for imax30 due to lower resolution data 
 # == # == # SETTING # == # == # SETTING # == # ==
 # == # == # == # == # == # == # == # == # == # == 
-
+# Start timer
+start_time = time.time()
 
 # Load the data from CSV
 data = pd.read_parquet(f"res/{station_num}_5min_newflag.parguqet.gzip")
@@ -119,19 +123,24 @@ dict_events= get_events_values(data=df_arr,
 # Here example for 30 minutes, so it extract 30 out of this dict_events
 df_erosivity_all_events = dict_events["30"].copy()
 df_erosivity_5 = get_only_erosivity_events(df_erosivity_all_events, 
-                                         use_both_thresholds=False)
+                                         use_both_thresholds=False,
+                                         intensity_threshold=thr_imax30)
 # == # == # == # SAVE RESULTS # == # == == # == # 
 if save_results:
     df_erosivity_5.to_parquet(f"out/{station_num}_erosivity_5min.parquet.gzip", compression="gzip")
 
+# End timer
+end_time = time.time()
+# Calculate the elapsed time
+elapsed_time = end_time - start_time
+print(f"Calculation of erosivity of 5min resolution : {elapsed_time:.2f} seconds")
 #%%
 # == # == # == # == # == # == # == # == # == # == 
 # == # == # SETTING # == # == # SETTING # == # ==
 # == # == # == # 60 min data # == # == # == # == #
 # == # == # == # 60 minutes intensity # ==  == #
 separation = 6           # Separation time between idependent storms -> dryspell between two events [hours]
-                         # rain breaks of at least 6 h (Wischmeier and Smith, 1958, 1978)
-                         
+                         # --> Rain breaks of at least 6 h (Wischmeier and Smith, 1958, 1978)
 durations = [60]         # List of durations for which we calculate rainfall depth [min]
                          #For Δt = 60 min, I30 was set equal to the maximum 60-min accumulated depth (Williams and Sheridan, 1991).
 min_rain = 0.1           # Minimum threshold for rain depth -> climate models have a drizzle problem [mm]
@@ -139,16 +148,17 @@ min_ev_dur = 30          # Minimum event duration [min]
 time_resolution = 60.0    # Time resolution of dattaset [min]
 name_col = "vals"        # Name of column containing data to extract
 use_both_thresholds = False # True Defined erosivity event as intensity >= threshold1 & accum_prec >= threshold2
-                            #False Defined erosivity event as intensity >= threshold1
-                            #here we have false cause we set RIST for single threshold on intensity
-                            
-#source https://hess.copernicus.org/articles/22/6505/2018/
-thr_imax30 = 5.79        #  adjusted threshold for imax30 due to lower resolution data 
+                            # False Defined erosivity event as intensity >= threshold1
+                            # --> here we have false cause we set RIST for single threshold on intensity                      
+#Following setting source https://hess.copernicus.org/articles/22/6505/2018/
+thr_imax30 = 5.79       #  adjusted threshold for imax30 due to lower resolution data 
 #temporal scale factor is from German study, it is better to estimate own scaling factor that will match data
 temporal_scale_factor = 1.9 # https://hess.copernicus.org/articles/22/6505/2018/
 # == # == # SETTING # == # == # SETTING # == # ==
 # == # == # == # == # == # == # == # == # == # == 
 
+# Start timer
+start_time = time.time()
 # Load the data from CSV
 data = pd.read_parquet(f"res/{station_num}_1h_flag.parguqet.gzip")
 data['time'] = pd.to_datetime(data['time'])
@@ -216,7 +226,13 @@ df_erosivity_60["erosivity_US_adj"] = df_erosivity_60["erosivity_US"] * temporal
 # == # == # == # SAVE RESULTS # == # == == # == # 
 if save_results:
     df_erosivity_60.to_parquet(f"out/{station_num}_erosivity_60min.parquet.gzip", compression="gzip")
-    
+
+# End timer
+end_time = time.time()
+# Calculate the elapsed time
+elapsed_time = end_time - start_time
+print(f"Calculation of erosivity of 60min resolution : {elapsed_time:.2f} seconds")
+
 #%%
 # == # == # == # == # == # == # == # == # == # == 
 # == # == # COMPARSION # == # COMPARISON # == # ==
@@ -349,3 +365,43 @@ if save_results:
     fig.savefig('fig/fig00_Re_comparison.jpeg', format='jpeg', dpi=300)
 plt.show()
 
+
+
+
+# Get lengths of the DataFrames
+lengths = [
+    ('RE 5 min from RIST', len(df_erosivity_5min_RIST)),
+    ('Re 5min', len(df_erosivity_5)),
+    ('Re 60min \n(German IMax30 threshold) \n5.79', len(df_erosivity_60))  
+]
+
+# Create the figure
+fig, ax = plt.subplots(figsize=(6, 2))  # Adjust the size as needed
+
+# Hide the axes (since we want to show only the table)
+ax.axis('off')
+
+# Create the table data (without including the column labels in the data)
+table_data = [ [name, length] for name, length in lengths]
+
+# Create the table in the figure
+table = ax.table(cellText=table_data, loc='center', colLabels=['DataFrame', 'Length'], cellLoc='center', colColours=['#f5f5f5', '#f5f5f5'])
+
+# Style the table (optional)
+table.auto_set_font_size(False)
+table.set_fontsize(12)
+table.scale(1.2, 1.2)
+
+# Adjust row height and column width (optional for better appearance)
+for (i, j), cell in table.get_celld().items():
+    if i == 0:
+        # Apply bold style to header row
+        cell.set_fontsize(14)
+        cell.set_text_props(weight='bold')
+    cell.set_height(0.45)  # Increase row height
+    cell.set_width(0.7)    # Increase column width
+
+# Show the figure
+if save_results:
+    fig.savefig('fig/fig00_RE_datasets_lenght.jpeg', format='jpeg', dpi=300)
+plt.show()
