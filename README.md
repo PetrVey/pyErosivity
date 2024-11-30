@@ -3,7 +3,7 @@ Erosivity calculation
 
 ## Example results
 
-## Figure 1: Erosivity comparsion on same filtered events
+## Figure 1: Erosivity comparison on same filtered events (N=73)
 
 ![Regression Comparison](fig/fig00_Re_comparison.jpeg)
 
@@ -11,6 +11,6 @@ This figure shows the comparison between erosivity `Re` from observation data `R
 
 ## Figure 2: Length of Datasets
 
-![Datasets Length](fig/fig00_RE_datasets_lenght.jpeg)
+<img src="fig/fig00_RE_datasets_lenght.jpeg" alt="Datasets Length" width="400"/>
 
 This figure shows the number of events in erosivity `Re` based on different method and in delta_t 
