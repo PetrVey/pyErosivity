@@ -64,14 +64,15 @@ use_both_thresholds = False # True Defined erosivity event as intensity >= thres
 thr_imax30 = 12.7         #  adjusted threshold for imax30 due to lower resolution data 
 # == # == # SETTING # == # == # SETTING # == # ==
 # == # == # == # == # == # == # == # == # == # == 
-# Start timer
-start_time = time.time()
 
 # Load the data from CSV
 data = pd.read_parquet(f"res/{station_num}_5min_newflag.parguqet.gzip")
 data['time'] = pd.to_datetime(data['time'])
 data = data.set_index('time')
 data = data.loc[slice_year_from:slice_year_to]
+
+# Start timer
+start_time = time.time()
 
 # Treat flagged points as np.nan
 # This is becuase we first remove incomplete years and np.nans are pushed to 0 after
@@ -157,14 +158,15 @@ temporal_scale_factor = 1.9 # https://hess.copernicus.org/articles/22/6505/2018/
 # == # == # SETTING # == # == # SETTING # == # ==
 # == # == # == # == # == # == # == # == # == # == 
 
-# Start timer
-start_time = time.time()
 # Load the data from CSV
 data = pd.read_parquet(f"res/{station_num}_1h_flag.parguqet.gzip")
 data['time'] = pd.to_datetime(data['time'])
 data = data.set_index('time')
 data = data.loc[slice_year_from:slice_year_to]
 
+
+# Start timer
+start_time = time.time()
 
 # Treat flagged points as np.nan
 # This is becuase we first remove incomplete years and np.nans are pushed to 0 after
