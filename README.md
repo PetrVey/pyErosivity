@@ -7,12 +7,11 @@ Erosivity calculation for example data in 5 min and 60 min temporal resolution.
 <br>Fischer, F. K., Winterrath, T., & Auerswald, K. (2018). Temporal- and spatial-scale and positional effects on rain erosivity derived from point-scale and contiguous rain data. Hydrology and Earth System Sciences, 22(12), 6505–6518. https://doi.org/10.5194/hess-22-6505-2018
 
 Where Imax30 thresholds to define erosivity event are:
-<br>12.7 mm/h for delta_t=Re_5min (temporal resolution: 5 min)
-<br>5.79 mm/h for delta_t=Re_60min (temporal resolution: 60 min)
+<br>**12.7 mm/h** for delta_t=Re_5min (temporal resolution: 5 min)
+<br>**5.79 mm/h** for delta_t=Re_60min (temporal resolution: 60 min)
+<br>Temporal scaling factor becomes **t=1.9** for temporal resolution: 60 min
 
-<br>Temporal scaling factor becomes t=1.9 for temporal resolution: 60 min
-
-**Note that we currently define erosivity events only with IMax30 threshold!**
+**Note that we currently define erosivity events ONLY with IMax30 threshold!**
 In further work we will also add events where accumulated precipitation during event > than 12.7mm
 
 **Efficiency:** 
