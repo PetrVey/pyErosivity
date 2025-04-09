@@ -76,7 +76,7 @@ start_time = time.time()
 
 # Treat flagged points as np.nan
 # This is becuase we first remove incomplete years and np.nans are pushed to 0 after
-data.loc[data['flag'] > 0, 'vals'] = np.nan
+data.loc[data['flag'] > 0, name_col ] = np.nan
 
 
 # Push values belows 0.1 to 0 in prec due to drizzle problem
@@ -124,7 +124,7 @@ dict_events= get_events_values(data=df_arr,
 # Here example for 30 minutes, so it extract 30 out of this dict_events
 df_erosivity_all_events = dict_events["30"].copy()
 df_erosivity_5 = get_only_erosivity_events(df_erosivity_all_events, 
-                                         use_both_thresholds=False,
+                                         use_both_thresholds=use_both_thresholds,
                                          intensity_threshold=thr_imax30)
 # == # == # == # SAVE RESULTS # == # == == # == # 
 if save_results:
@@ -170,7 +170,7 @@ start_time = time.time()
 
 # Treat flagged points as np.nan
 # This is becuase we first remove incomplete years and np.nans are pushed to 0 after
-data.loc[data['flag'] > 0, 'vals'] = np.nan
+data.loc[data['flag'] > 0, name_col ] = np.nan
 
 
 # Push values belows 0.1 to 0 in prec due to drizzle problem
@@ -220,7 +220,7 @@ df_erosivity_all_events_60 = dict_events["60"].copy()
 
 # Get erosivity events with different intesnity threshold, this threshold should be optimized based on needs.
 df_erosivity_60 = get_only_erosivity_events(df_erosivity_all_events_60, 
-                                            use_both_thresholds=False, 
+                                            use_both_thresholds=use_both_thresholds, 
                                             intensity_threshold=thr_imax30)
 
 #If temporal adjustment for resolution is needed, again, this scale factor should be better determined by needs
