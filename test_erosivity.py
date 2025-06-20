@@ -3,6 +3,20 @@
 Created on Sat Nov 30 11:55:27 2024
 
 @author: Petr
+
+This file shows how to apply pyerosivity package.
+
+1)
+It reads 5min erosivity output from RIST - Rainfall Intensity Summarization Tool.
+https://www.ars.usda.gov/southeast-area/oxford-ms/national-sedimentation-laboratory/watershed-physical-processes-research/research/rist/rist-rainfall-intensity-summarization-tool/
+
+2) It calculates erosivity out of 5min data and compare them with RIST output
+
+3) It calculates eorisvity out of 60min data and compare them with 5min resolution
+
+4) It applies adjustment of IMAX threshold with temporal correction factor]
+
+5) All results are plotted based on erosive events with different methods and data.
 """
 
 import pandas as pd
