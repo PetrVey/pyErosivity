@@ -410,3 +410,77 @@ def get_only_erosivity_events(df, accum_threshold=12.7, intensity_threshold=12.7
     filtered_df = filtered_df.reset_index(drop=True)    
     return filtered_df
 
+def boostrapping_erosivity_60min ( df_erosivity, 
+                                  niter=1000,
+                                  M=None):
+    """
+    Warning, this function is for boostrapping erosivity out of 60min dataset
+    based on event peak year.
+
+    
+    Parameters
+    ----------
+    df_erosivity : pandas
+        df_erosivity is pandas which is given 
+        by fuctnion "get_only_erosivity_events" and 
+        after calculcting the adjusted erosivity
+        for 60 min data
+        
+    niter : int, optional
+        N of boostrap samples (N of boostrap iteration). The default is 1000.
+        
+    M : int, optional
+        Number of boostrap sample lenght in years.
+        eg. 10 gives 10 years data lenght etc.
+
+    Returns
+    -------
+    f_bootstrap_summary
+
+    """
+    # Ensure 'event_peak' is datetime
+    df_erosivity['event_peak'] = pd.to_datetime(df_erosivity['event_peak'])
+
+    # extract years out of population
+    blocks = np.unique(df_erosivity['event_peak'].dt.year)
+    # M 
+    if M == None:
+        M = len(blocks)
+    else:
+        pass
+    
+    # Create bootstrap samples as random combination of years
+    randy = np.random.choice(blocks, size=(niter, M), replace=True)
+    
+    # Precompute yearly aggregates once
+    yearly_agg = df_erosivity.groupby('year').agg(
+        N_events=('event_peak', 'count'),
+        mean_intensity_per_hour=('intensity_per_hour', 'mean'),
+        mean_prec_accum=('prec_accum', 'mean'),
+        sum_erosivity_US_adj=('erosivity_US_adj', 'sum')
+    ).reset_index()
+    
+    # Then bootstrap sample years from yearly_agg, sum/mean accordingly
+    bootstrap_summaries = []
+    
+    for i, sampled_years in enumerate(randy, 1):
+        sample_df = yearly_agg[yearly_agg['year'].isin(sampled_years)]
+    
+        overall_means = sample_df[['N_events', 'mean_intensity_per_hour', 'mean_prec_accum', 'sum_erosivity_US_adj']].mean()
+    
+        overall_means.index = [
+            'mean_annual_events',
+            'mean_annual_Imax',
+            'mean_rain_depth',
+            'average_annual_erosivity'
+        ]
+    
+        overall_means['sample'] = f'sample_{i}'
+        bootstrap_summaries.append(overall_means)
+    
+    df_bootstrap_summary = pd.DataFrame(bootstrap_summaries).set_index('sample')
+    
+    return df_bootstrap_summary
+
+    
+        
