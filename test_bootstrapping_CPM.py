@@ -6,9 +6,18 @@ Created on Fri Jun 20 10:16:59 2025
 
 Script shows how to apply uncertainty analysis from bootstrapping with 1000 samples.
 
-Data are NOT sliced based on years as in the test_erosivity.py script.
+Data used in this example are from station co-located grid from ETH CPM Historical period.
+Data are from 1996-2005, so 10 years slice.
+We again use same station VE_0091
 
-BOOTSTRAPPING IS DONE AT STAGE 4
+BOOTSTRAPPING IS DONE AT STAGE 4 (with loaded prepared bootstrap samples sequances)
+We use preprepared boostrap sampple sequance which has been used in previous research.
+The sequence is done by randomizing order of 10 available years 1000x
+#  Dallan et al., 2023 
+#  How well does a convection-permitting regional climate model represent
+#  the reverse orographic effect of extreme hourly precipitation?, 
+#  https://doi.org/10.5194/hess-27-1133-2023
+
 
 """
 import pandas as pd
@@ -19,7 +28,8 @@ from src.pyErosivity import get_events
 from src.pyErosivity import remove_short 
 from src.pyErosivity import get_events_values 
 from src.pyErosivity import get_only_erosivity_events
-from src.pyErosivity import boostrapping_erosivity_60min 
+from src.pyErosivity import boostrapping_erosivity_CPM_60min
+
 
 # We use VE_0091 station data in resampled hourly resolution as an example
 station_num = "VE_0091"
@@ -35,7 +45,7 @@ durations = [60]         # List of durations for which we calculate rainfall dep
 min_rain = 0.1           # Minimum threshold for rain depth -> climate models have a drizzle problem [mm]
 min_ev_dur = 30          # Minimum event duration [min]
 time_resolution = 60.0    # Time resolution of dattaset [min]
-name_col = "vals"        # Name of column containing data to extract
+name_col = "pr_new"      # Name of column containing data to extract
 use_both_thresholds = False # True Defined erosivity event as intensity >= threshold1 & accum_prec >= threshold2
                             # False Defined erosivity event as intensity >= threshold1
                             # --> here we have false cause we set RIST for single threshold on intensity                      
@@ -46,17 +56,18 @@ temporal_scale_factor = 1.9 # https://hess.copernicus.org/articles/22/6505/2018/
 # == # == # SETTING # == # == # SETTING # == # ==
 # == # == # == # == # == # == # == # == # == # == 
 
+
 # Load the data from CSV
-data = pd.read_parquet(f"res/{station_num}_1h_flag.parguqet.gzip")
+data = pd.read_csv(f"res/{station_num}_ETH_hist.csv")
 data['time'] = pd.to_datetime(data['time'])
 data = data.set_index('time')
 
+# Load randy file with prepapred boostrap samples sequances
+randy = np.loadtxt('res/randy.txt', delimiter=',')
+randy = randy.T  # Transpose to get shape (1000, 10)
+randy = randy.astype(np.int32)
+
 #%% # === STAGE 1: Calculate event staitics of population ===
-
-# Treat flagged points as np.nan
-# This is becuase we first remove incomplete years and np.nans are pushed to 0 after
-data.loc[data['flag'] > 0, name_col ] = np.nan
-
 
 # Push values belows 0.1 to 0 in prec due to drizzle problem
 data.loc[data[name_col] < min_rain, name_col] = 0
@@ -154,8 +165,9 @@ print(overall_means)
 
 #%% # === STAGE 4: Bootstrapp the events to accomodate for uncertainty ===
 
-df_bootstrap_summary = boostrapping_erosivity_60min(df_erosivity_60)
-
+# BE SURE THAT RANDY IS LOADED AND HAS SHAPE (1000, 10), or where each row is sequance of years.
+df_bootstrap_summary = boostrapping_erosivity_CPM_60min(df_erosivity_60,
+                                                        randy=randy)
 
 #%% # === STAGE 5: Bootstrapp the events to accomodate for uncertainty ===
 
@@ -168,16 +180,16 @@ variables = [
 ]
 
 ylims = [
-    (15, 20),       # for mean_annual_events
-    (8, 10),        # for mean_annual_Imax
-    (30, 40),       # for mean_rain_depth
-    (1500, 2200)    # for average_annual_erosivity
+    (22, 30),       # for mean_annual_events
+    (8, 12),        # for mean_annual_Imax
+    (40, 54),       # for mean_rain_depth
+    (4000, 6000)    # for average_annual_erosivity
 ]
 
 # Create 2x2 subplot grid
 fig, axes = plt.subplots(2, 2, figsize=(10, 10))
 axes = axes.flatten()
-
+ 
 for i, var in enumerate(variables):
     ax = axes[i]
     # Boxplot from bootstrap samples
