@@ -396,6 +396,10 @@ def E_kin_i(intensity):
     # which is based on 
     # Rogler, H. and Schwertmann, U.: 
     # Erosivität der Niederschläge und Isoerodentkarte Bayerns, J. Rural Engi. Developm., 22, 99–112, 1981. 
+    
+    #The upper limit is set because raindrops do not continue to grow significantly indefinitely; 
+    #their size and fall velocity approach practical maxima” (Van Dijk et al., 2002).
+    
     if intensity < 0.05:
         return 0
     elif intensity >= 76.2:
@@ -410,12 +414,68 @@ def E_kin_i_BrFr(intensity):
     return 0.29*(1-0.72*np.exp(-0.05*intensity))
     
 def get_only_erosivity_events(df, accum_threshold=12.7, intensity_threshold=12.7, use_both_thresholds=True):
-    
+    """
+    Wischmeier 1959, 1979
+    Also used in Rogler and Schwertmann 1981 and DIN 19708:2017-08
+
+    Parameters
+    ----------
+    df : TYPE
+        DESCRIPTION.
+    accum_threshold : TYPE, optional
+        DESCRIPTION. The default is 12.7.
+    intensity_threshold : TYPE, optional
+        DESCRIPTION. The default is 12.7.
+    use_both_thresholds : TYPE, optional
+        DESCRIPTION. The default is True.
+
+    Returns
+    -------
+    filtered_df : TYPE
+        DESCRIPTION.
+
+    """
     if use_both_thresholds:
         filtered_df = df[(df['intensity_per_hour'] >= intensity_threshold) | (df['prec_accum'] >= accum_threshold)]
     else:
         filtered_df = df[(df['intensity_per_hour'] >= intensity_threshold)]
         
+    filtered_df = filtered_df.reset_index(drop=True)    
+    return filtered_df
+
+
+def get_only_erosivity_events_Renard(df, accum_threshold=12.7, depth_threshold=12.7):
+    """
+    This function is consistent with Renard 1997 (RUSLE)
+    
+   criteria for the identification of an erosive event are given:
+        (i) the cumulative rainfall of an event is greater than 12.7 mm, or 
+        (ii) the event has at least one peak that is greater than 6.35 mm during a period of 15 min 
+        (or 12.7 mm during a period of 30 min). 
+    
+    Keep in mind that this is designed for the high temporal resolution data. where we can estimate correctly Imax15 and Imax30.
+    If we have hourly data, this treshold must be adjusted. 
+    
+    Parameters
+    ----------
+    df : TYPE
+        DESCRIPTION.
+    accum_threshold : TYPE, optional
+        DESCRIPTION. The default is 12.7.
+    intensity_threshold : TYPE, optional
+        DESCRIPTION. The default is 12.7.
+    use_both_thresholds : TYPE, optional
+        DESCRIPTION. The default is True.
+
+    Returns
+    -------
+    filtered_df : TYPE
+        DESCRIPTION.
+
+    """
+
+    filtered_df = df[(df['prec_depth'] >= depth_threshold) | (df['prec_accum'] >= accum_threshold)]
+
     filtered_df = filtered_df.reset_index(drop=True)    
     return filtered_df
 
