@@ -319,16 +319,25 @@ def get_events_values(data, dates, arr_dates_oe, durations=[], time_resolution=N
                     ll_Re = ll_Ekin * ll_intesnity
                     
                 else:
+                    # do convolve inside of the event
+                    arr_conv2 = np.convolve(data[start_time_idx : end_time_idx + 1],
+                                           np.ones(int(durations[d] / time_resolution), dtype=int),
+                                           "same",
+                                       )
+                    
+                    
                     # the +1 in end_time_index is because then we search by index but we want to includde last as well,
                     # without, it slices eg. end index is 10, without +1 it slices 0 to 9 instead of 0 to 10 (stops 1 before)    
                     # get index of ll_val within the sliced array
-                    ll_idx_in_slice = np.nanargmax(arr_conv[start_time_idx:end_time_idx+1]) 
+                    #old version ll_idx_in_slice = np.nanargmax(arr_conv[start_time_idx:end_time_idx+1]) 
+                    ll_idx_in_slice = np.nanargmax(arr_conv2)
                     
                     # Adjust the index to refer to the original arr_conv
                     ll_idx_in_arr_conv = start_time_idx + ll_idx_in_slice
                     
                     # Get max value -> peak
-                    ll_val = arr_conv[ll_idx_in_arr_conv] 
+                    #old version ll_val = arr_conv[ll_idx_in_arr_conv] 
+                    ll_val = arr_conv2[ll_idx_in_slice]
                     
                     # Get intensity in mm/h
                     ll_intesnity =  ll_val * 60 / durations[d] 
