@@ -174,6 +174,143 @@ def get_events(data, dates, separation, min_rain, name_col='value', check_gaps=T
                 
     return consecutive_values
 
+
+def split_event_by_6h_threshold_dates(event_dates, dates, data, window_steps, date_to_idx, thresh=1.27):
+    """
+    Split a preliminary storm into sub-events using 6-hour accumulation.
+    event_dates : array of numpy.datetime64
+    returns     : list of arrays of numpy.datetime64
+    """
+
+    # Map dates → indices
+    event_idx = np.array([date_to_idx[d] for d in event_dates])
+
+    # Rolling sum on the **full data**, then select event indices
+    full_roll = np.convolve(data, np.ones(window_steps), mode="same")
+    roll = full_roll[event_idx]  # only values corresponding to this event
+
+    wet = roll > thresh
+
+    splits = []
+    temp = []
+
+    for d, flag in zip(event_dates, wet):
+        if flag:
+            temp.append(d)
+        else:
+            if temp:
+                splits.append(np.array(temp))
+                temp = []
+
+    if temp:
+        splits.append(np.array(temp))
+
+    return splits
+
+
+
+
+def get_events_Renard_RUSLE(data, dates, separation, time_resolution, check_gaps=True, ):
+    """
+    
+    Function that extracts precipitation events out of the entire data.
+    A rainfall accumulation of less than 1.27 mm during a period of 6 h splits a longer storm period into two storms. 
+    
+    
+    """
+    min_rain = 0
+    above_threshold_indices = np.where(data > min_rain)[0]
+    
+
+    # Find consecutive values above threshold separated by more than 24 observations
+    consecutive_values_temp = []
+    temp = []
+    for index in above_threshold_indices:
+        if not temp:
+            temp.append(index)
+        else:
+            #numpy delta is in nanoseconds, it  might be better to do dates[index] - dates[temp[-1]]).item() / np.timedelta64(1, 'm')
+            if (dates[index] - dates[temp[-1]]).item() > (separation * 3.6e+12):  # Assuming 24 is the number of hours, nanoseconds * 3.6e+12 = hours
+                if len(temp) >= 1:
+                    consecutive_values_temp.append(dates[temp])
+                temp = []
+            temp.append(index)
+    if len(temp) >= 1:
+        consecutive_values_temp.append(dates[temp])
+        
+    date_to_idx = {d: i for i, d in enumerate(dates)}
+    
+    dt_hours = time_resolution / 60
+    window_steps = int(6 / dt_hours)
+        
+    consecutive_values = []
+    
+    for event_dates in consecutive_values_temp:
+        sub_events = split_event_by_6h_threshold_dates(
+            event_dates=event_dates,
+            dates=dates,
+            data=data,
+            window_steps=window_steps,
+            date_to_idx=date_to_idx,
+            thresh=1.27
+        )
+        consecutive_values.extend(sub_events)
+
+    if check_gaps == True:
+        #remove event that starts before dataset starts in regard of separation time
+        if (consecutive_values[0][0] - dates[0]).item() < (separation * 3.6e+12): #this numpy dt, so still in nanoseconds
+            consecutive_values.pop(0)
+        else:
+            pass
+        
+        #remove event that ends before dataset ends in regard of separation time
+        if (dates[-1] - consecutive_values[-1][-1]).item() < (separation * 3.6e+12): #this numpy dt, so still in nanoseconds
+            consecutive_values.pop()
+        else:
+            pass
+        
+        #Locate OE that ends before gaps in data starts.
+        # Calculate the differences between consecutive elements
+        time_diffs = np.diff(dates)
+        #difference of first element is time resolution
+        time_res = time_diffs[0]
+        # Identify gaps (where the difference is greater than 1 hour)
+        gap_indices_end = np.where(time_diffs > np.timedelta64(int(separation * 3.6e+12), 'ns'))[0]
+        # extend by another index in gap cause we need to check if there is OE there too
+        gap_indices_start = ( gap_indices_end  + 1)
+       
+        match_info = []
+        for gap_idx in gap_indices_end:
+            end_date = dates[gap_idx]
+            start_date = end_date - np.timedelta64(int(separation * 3.6e+12), 'ns')
+            # Creating an array from start_date to end_date in hourly intervals
+            temp_date_array = np.arange(start_date, end_date, time_res)
+            
+            # Checking for matching indices in consecutive_values
+            for i, sub_array in enumerate(consecutive_values):
+                match_indices = np.where(np.isin(sub_array, temp_date_array))[0]
+                if match_indices.size > 0:
+                    
+                    match_info.append(i)
+         
+        for gap_idx in gap_indices_start:
+            start_date = dates[gap_idx]
+            end_date = start_date + np.timedelta64(int(separation * 3.6e+12), 'ns')
+            # Creating an array from start_date to end_date in hourly intervals
+            temp_date_array = np.arange(start_date, end_date, time_res)
+            
+            # Checking for matching indices in consecutive_values
+            for i, sub_array in enumerate(consecutive_values):
+                match_indices = np.where(np.isin(sub_array, temp_date_array))[0]
+                if match_indices.size > 0:
+                    
+                    match_info.append(i)
+                    
+        for del_index in sorted( match_info, reverse=True):
+            del consecutive_values[del_index]
+                
+    return consecutive_values
+
 def remove_short(list_events:list, time_resolution=None, min_ev_dur=None):
      """
      
