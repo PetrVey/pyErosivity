@@ -215,6 +215,12 @@ idx_events=get_events(data = df_arr,
                       min_rain = min_rain,
                       name_col = name_col,  
                       check_gaps = False)
+
+#idx_events = get_events_Renard_RUSLE(data = df_arr,
+#                                    dates = df_dates, 
+#                                    separation = separation, 
+#                                    time_resolution= time_resolution,
+#                                    check_gaps=False)
     
 #get events by removing too short events
 #returns boolean array, dates of OE in TO, FROM format, and count of OE in each years
