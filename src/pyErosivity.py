@@ -216,7 +216,16 @@ def get_events_Renard_RUSLE(data, dates, separation, time_resolution, check_gaps
     Function that extracts precipitation events out of the entire data.
     A rainfall accumulation of less than 1.27 mm during a period of 6 h splits a longer storm period into two storms. 
     
+    Please be aware that this function actually deletes drizzles as it marks end of storm if rolling mean accumulated precipitation in 6h is less than 1.27.
+    example on 14h storm:
     
+hour |  1  |  2  |  3  |  4  |  5  |  6  |  7  |  8  |  9  | 10  | 11  | 12  | 13  | 14  |
+      |-----|-----|-----|-----|-----|-----|-----|-----|-----|-----|-----|-----|-----|-----|
+prec  | 0.4 | 1.2 |  5  | 0.2 | 0.2 | 0.2 | 0.2 | 0.2 | 0.2 | 0.2 | 0.2 | 0.2 | 10  | 0.2 |
+6h acc| 7.2 |  7  |  6  | 1.2 | 1.2 | 1.2 | 1.2 | 11  | 11  |10.8 |10.6 |10.4 |10.2 | 0.2 |
+      |S#1  |     |END#1|     |     |     |     |S#2  |     |     |     |     |     |END#2|
+      |     |     |Split|     |     |     |     |     |     |     |     |     |     |     |
+      |     |     |Point|     |     |     |     |     |     |     |     |     |     |     |    
     """
     min_rain = 0
     above_threshold_indices = np.where(data > min_rain)[0]
