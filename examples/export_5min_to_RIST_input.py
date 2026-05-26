@@ -32,7 +32,7 @@ df = pd.read_parquet(
 )
 df['time'] = pd.to_datetime(df['time'])
 df = df.set_index('time')
-df = df.loc['1990':'1991']
+df = df.loc['1990':'2020']
 
 df.loc[df['flag'] > 0, 'vals'] = 0
 df.loc[df['vals'] < min_rain, 'vals'] = 0
