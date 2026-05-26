@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 Created on Fri Nov 29 10:25:32 2024
 
@@ -10,24 +10,25 @@ from packaging.version import parse
 
 def remove_incomplete_years(data_pr, name_col = 'value', nan_to_zero=True, tolerance=0.1):
     """
-    Function that delete incomplete years in precipitation data.
-    
+    Remove years with too many missing values from a precipitation time series.
+
     Parameters
     ----------
-    data_pr : pd dataframe
-        dataframe containing the hourly values of precipitation
-    name_col : string
-        name of column where variable values are stored 
-    nan_to_zero: bool
-        push nan to zero
-    tolerance : float
-        Max fraction of missing data in one year [-]
-         
+    data_pr : pd.DataFrame
+        DataFrame with a DatetimeIndex containing precipitation values.
+    name_col : str, optional
+        Name of the column with precipitation values. Default 'value'.
+    nan_to_zero : bool, optional
+        Replace remaining NaNs with 0 after filtering. Default True.
+    tolerance : float, optional
+        Maximum allowed fraction of missing values per year [0–1]. Default 0.1 (10%).
+
     Returns
     -------
-    data_cleanded: pd dataframe 
-       cleaned dataset.
-
+    data_cleaned : pd.DataFrame
+        Filtered dataset with incomplete years removed.
+    time_resolution : float
+        Detected time step of the dataset [minutes].
     """
     # Step 1: get resolution of dataset (MUST BE SAME in whole dataset!!!)
     time_res = (data_pr.index[-1] - data_pr.index[-2]).total_seconds()/60
@@ -55,27 +56,34 @@ def remove_incomplete_years(data_pr, name_col = 'value', nan_to_zero=True, toler
 
 def get_events(data, dates, separation, min_rain, name_col='value', check_gaps=True):
     """
-    
-    Function that extracts precipitation events out of the entire data.
-    
+    Extract precipitation events from a continuous time series.
+
+    Two rain periods are considered the same event if the gap between them is
+    shorter than `separation` hours. Events touching data gaps or dataset
+    boundaries within `separation` hours are discarded (check_gaps=True).
+
     Parameters
     ----------
-    - data np.array: array containing the hourly values of precipitation.
-    - separation (int): The number of hours used to define an independet ordianry event. Defult: 24 hours. this is saved in SMEV S class
-                    Days with precipitation amounts above this threshold are considered events.
-    - name_col (string): The name of the df column with precipitation values
-    - check_gaps (bool): This also check for gaps in data and for unknown start/end events
-    - min_rain : float
-        minimum rainfall value, 
-        reason --> Climate models has issue with too small float values (drizzles, eg. 0.0099mm/h)
-               --> Another reason is that the that rain gauge tipping bucket has min value
+    data : pd.DataFrame or np.ndarray
+        Precipitation values.
+    dates : np.ndarray
+        Timestamps corresponding to data (used when data is np.ndarray).
+    separation : int or float
+        Minimum dry gap [hours] required to split two events.
+    min_rain : float
+        Minimum precipitation value to be considered non-zero. Filters out
+        gauge noise and climate-model drizzle artefacts (e.g. 0.001 mm/h).
+    name_col : str, optional
+        Column name for precipitation values when data is a DataFrame. Default 'value'.
+    check_gaps : bool, optional
+        If True, remove events whose start/end falls within `separation` hours
+        of a data gap or the dataset boundary. Default True.
+
     Returns
     -------
-    - consecutive_values np.array: index of time of consecutive values defining the events.
-
-
-    Examples
-    --------
+    consecutive_values : list of arrays
+        Each element is an array of timestamps (np.datetime64) or pd.Timestamps
+        belonging to one event.
     """
     if isinstance(data,pd.DataFrame):
         # Find values above threshold
@@ -96,28 +104,24 @@ def get_events(data, dates, separation, min_rain, name_col='value', check_gaps=T
             consecutive_values.append(temp)
             
     elif isinstance(data,np.ndarray):
+        dates = dates.astype("datetime64[ns]")
 
-        # Assuming data is your numpy array
-        # Assuming name_col is the index for comparing threshold
-        # Assuming threshold is the value above which you want to filter
+        if min_rain == 0:
+            above_threshold_indices = np.where(data > min_rain)[0]
+        else:
+            above_threshold_indices = np.where(data >= min_rain)[0]
 
-        above_threshold_indices = np.where(data > min_rain)[0]
+        if len(above_threshold_indices) == 0:
+            return []
 
-        # Find consecutive values above threshold separated by more than 24 observations
-        consecutive_values = []
-        temp = []
-        for index in above_threshold_indices:
-            if not temp:
-                temp.append(index)
-            else:
-                #numpy delta is in nanoseconds, it  might be better to do dates[index] - dates[temp[-1]]).item() / np.timedelta64(1, 'm')
-                if (dates[index] - dates[temp[-1]]).item() > (separation * 3.6e+12):  # Assuming 24 is the number of hours, nanoseconds * 3.6e+12 = hours
-                    if len(temp) >= 1:
-                        consecutive_values.append(dates[temp])
-                    temp = []
-                temp.append(index)
-        if len(temp) >= 1:
-            consecutive_values.append(dates[temp])
+        # Vectorized event grouping: find gaps between consecutive wet steps,
+        # then split at those gaps — O(n) vs the old O(n) Python loop but ~10x faster
+        above_dates = dates[above_threshold_indices]
+        time_diffs_above = np.diff(above_dates).astype(np.int64)
+        separation_ns = int(separation * 3.6e12)
+        split_points = np.where(time_diffs_above > separation_ns)[0] + 1
+        index_groups = np.split(above_threshold_indices, split_points)
+        consecutive_values = [dates[group] for group in index_groups]
     
     if check_gaps == True:
         #remove event that starts before dataset starts in regard of separation time
@@ -177,9 +181,31 @@ def get_events(data, dates, separation, min_rain, name_col='value', check_gaps=T
 
 def split_event_by_6h_threshold_dates(event_dates, dates, data, window_steps, date_to_idx, thresh=1.27):
     """
-    Split a preliminary storm into sub-events using 6-hour accumulation.
-    event_dates : array of numpy.datetime64
-    returns     : list of arrays of numpy.datetime64
+    Split a storm into sub-events based on the Renard et al. (1997) RUSLE 6-hour rule.
+
+    Per RUSLE (Renard 1997): if accumulated rainfall in any 6-hour period within a storm
+    is less than 1.27 mm (0.05 in), that period is treated as a dry break and the storm
+    is split into two separate erosive events at that point.
+
+    Parameters
+    ----------
+    event_dates : np.ndarray of np.datetime64
+        Timestamps of the preliminary storm (all wet steps).
+    dates : np.ndarray of np.datetime64
+        Full dataset timestamps (used to compute the rolling sum over the whole series).
+    data : np.ndarray
+        Full precipitation array aligned with dates.
+    window_steps : int
+        Number of time steps in a 6-hour window (= 6h / time_resolution).
+    date_to_idx : dict
+        Mapping from np.datetime64 timestamp to integer index in dates/data.
+    thresh : float, optional
+        Minimum 6-hour accumulation [mm] to keep a period as wet. Default 1.27 mm.
+
+    Returns
+    -------
+    splits : list of np.ndarray
+        Sub-event arrays of np.datetime64; each array is one continuous erosive period.
     """
 
     # Map dates → indices
@@ -212,20 +238,42 @@ def split_event_by_6h_threshold_dates(event_dates, dates, data, window_steps, da
 
 def get_events_Renard_RUSLE(data, dates, separation, time_resolution, check_gaps=True, ):
     """
+    Extract precipitation events using the Renard et al. (1997) RUSLE storm-splitting rule.
+
+    Storms are first identified as continuous rain periods (any gap > separation hours ends an event).
+    Each preliminary storm is then split further: if accumulated rainfall in any 6-hour window
+    drops below 1.27 mm (0.05 in), that gap defines a boundary between two separate erosive events.
+    This also removes isolated drizzle steps that fall below the 6-hour accumulation threshold.
+
+    Example — a 14-hour storm split into two sub-events:
+
+
     
-    Function that extracts precipitation events out of the entire data.
-    A rainfall accumulation of less than 1.27 mm during a period of 6 h splits a longer storm period into two storms. 
-    
-    Please be aware that this function actually deletes drizzles as it marks end of storm if rolling mean accumulated precipitation in 6h is less than 1.27.
-    example on 14h storm:
-    
-hour |  1  |  2  |  3  |  4  |  5  |  6  |  7  |  8  |  9  | 10  | 11  | 12  | 13  | 14  |
-      |-----|-----|-----|-----|-----|-----|-----|-----|-----|-----|-----|-----|-----|-----|
-prec  | 0.4 | 1.2 |  5  | 0.2 | 0.2 | 0.2 | 0.2 | 0.2 | 0.2 | 0.2 | 0.2 | 0.2 | 10  | 0.2 |
-6h acc| 7.2 |  7  |  6  | 1.2 | 1.2 | 1.2 | 1.2 | 11  | 11  |10.8 |10.6 |10.4 |10.2 | 0.2 |
-      |S#1  |     |END#1|     |     |     |     |S#2  |     |     |     |     |     |END#2|
-      |     |     |Split|     |     |     |     |     |     |     |     |     |     |     |
-      |     |     |Point|     |     |     |     |     |     |     |     |     |     |     |    
+    hour |  1  |  2  |  3  |  4  |  5  |  6  |  7  |  8  |  9  | 10  | 11  | 12  | 13  | 14  |
+         |-----|-----|-----|-----|-----|-----|-----|-----|-----|-----|-----|-----|-----|-----|
+    prec | 0.4 | 1.2 |  5  | 0.2 | 0.2 | 0.2 | 0.2 | 0.2 | 0.2 | 0.2 | 0.2 | 0.2 | 10  | 0.2 |
+    6h   | 7.2 |  7  |  6  | 1.2 | 1.2 | 1.2 | 1.2 | 11  | 11  |10.8 |10.6 |10.4 |10.2 | 0.2 |
+         |S#1  |     |END#1|     |     |     |     |S#2  |     |     |     |     |     |END#2|
+
+    Hours 4–7 have 6h accumulation = 1.2 mm < 1.27 mm → split point between event #1 and #2.
+
+    Parameters
+    ----------
+    data : np.ndarray
+        Full precipitation array.
+    dates : np.ndarray of np.datetime64
+        Timestamps aligned with data.
+    separation : int or float
+        Minimum dry gap [hours] to end a preliminary storm (passed to the initial event finder).
+    time_resolution : int or float
+        Data time step [minutes]. Used to compute the 6-hour window size.
+    check_gaps : bool, optional
+        Remove events touching data gaps or dataset boundaries. Default True.
+
+    Returns
+    -------
+    consecutive_values : list of np.ndarray
+        Each element is an array of np.datetime64 timestamps for one erosive event.
     """
     min_rain = 0
     above_threshold_indices = np.where(data > min_rain)[0]
@@ -321,337 +369,380 @@ prec  | 0.4 | 1.2 |  5  | 0.2 | 0.2 | 0.2 | 0.2 | 0.2 | 0.2 | 0.2 | 0.2 | 0.2 | 
     return consecutive_values
 
 def remove_short(list_events:list, time_resolution=None, min_ev_dur=None):
-     """
-     
-     Function that removes events events too short.
-     
-     Parameters
-     ----------
-     - list_events list: list of indices of events events as returned by `get_events_events`.
-     - time_resolution: Used to calculate lenght of storm [mins]
-     - min_ev_dur : int
-         Minimum event duration [min]
-     Returns
-     -------
-     - arr_vals : boolean array, 
-     - arr_dates : dates of OE in TO, FROM format
-     - n_events_per_year: count of OE in each years
+    """
+    Remove precipitation events shorter than a minimum duration.
 
-     Examples
-     --------
-     """
-     if time_resolution==None or min_ev_dur==None:
-         print("Warning !!!! Warning !!!! Warning !!!! Warning !!!! Warning !!!!")
-         print("Warning !!!! Warning !!!! Warning !!!! Warning !!!! Warning !!!!")
-         print("time_resolution or min_ev_duration not provided")
-         arr_vals,arr_dates,n_events_per_year = np.nan,np.nan,np.nan
-     else:
-         if isinstance(list_events[0][0],pd.Timestamp):
-             # event is multiplied by its lenght to get duration and compared with min_duration setup
-             ll_short=[True if ev[-1]-ev[0] + pd.Timedelta(minutes=time_resolution) >= pd.Timedelta(minutes=min_ev_dur) else False for ev in list_events]
-             ll_dates=[(ev[-1].strftime("%Y-%m-%d %H:%M:%S"),ev[0].strftime("%Y-%m-%d %H:%M:%S")) if ev[-1]-ev[0] + pd.Timedelta(minutes=time_resolution) >= pd.Timedelta(minutes=min_ev_dur)
-                       else (np.nan,np.nan) for ev in list_events]
-             arr_vals=np.array(ll_short)[ll_short]
-             arr_dates=np.array(ll_dates)[ll_short]
-             filtered_list = [x for x, keep in zip(list_events, ll_short) if keep]
-             list_year=pd.DataFrame([filtered_list[_][0].year for _ in range(len(filtered_list))],columns=['year'])
-             n_events_per_year=list_year.reset_index().groupby(["year"]).count()
-             # n_events=n_events_per_year.mean().values.item()
-         elif isinstance(list_events[0][0],np.datetime64):
-             ll_short=[True if (ev[-1]-ev[0]).astype('timedelta64[m]')+ np.timedelta64(int(time_resolution),'m') >= pd.Timedelta(minutes=min_ev_dur) else False for ev in list_events]
-             ll_dates=[(ev[-1],ev[0]) if (ev[-1]-ev[0]).astype('timedelta64[m]') + np.timedelta64(int(time_resolution),'m') >= pd.Timedelta(minutes=min_ev_dur) else (np.nan,np.nan) for ev in list_events]
-             arr_vals=np.array(ll_short)[ll_short]
-             arr_dates=np.array(ll_dates)[ll_short]
-  
-             filtered_list = [x for x, keep in zip(list_events, ll_short) if keep]
-             list_year=pd.DataFrame([filtered_list[_][0].astype('datetime64[Y]').item().year for _ in range(len(filtered_list))],columns=['year'])
-             n_events_per_year=list_year.reset_index().groupby(["year"]).count()
-             # n_events=n_events_per_year.mean().values.item()
+    Parameters
+    ----------
+    list_events : list of arrays
+        Output of get_events or get_events_Renard_RUSLE — each element is an array
+        of timestamps for one event.
+    time_resolution : int or float
+        Data time step [minutes]. Required to compute event duration correctly
+        (duration = last_step - first_step + time_resolution).
+    min_ev_dur : int or float
+        Minimum event duration [minutes]. Events shorter than this are removed.
 
-     return arr_vals,arr_dates,n_events_per_year
+    Returns
+    -------
+    arr_vals : np.ndarray
+        Boolean array (all True) for events that passed the filter.
+    arr_dates : np.ndarray, shape (N, 2)
+        Array of (end, start) timestamp pairs for each retained event.
+    n_events_per_year : pd.DataFrame
+        Count of retained events per calendar year.
+    """
+    if time_resolution is None or min_ev_dur is None:
+        raise ValueError("time_resolution and min_ev_dur must both be provided.")
+
+    # Normalise to np.datetime64 so there is one unified code path
+    if isinstance(list_events[0][0], pd.Timestamp):
+        list_events = [
+            np.array([t.to_datetime64() for t in ev])
+            for ev in list_events
+        ]
+
+    min_duration = np.timedelta64(int(min_ev_dur), "m")
+    time_res     = np.timedelta64(int(time_resolution), "m")
+
+    ll_short = [
+        (ev[-1] - ev[0]).astype("timedelta64[m]") + time_res >= min_duration
+        for ev in list_events
+    ]
+
+    ll_dates = [
+        (ev[-1], ev[0]) if keep else (np.nan, np.nan)
+        for ev, keep in zip(list_events, ll_short)
+    ]
+
+    arr_vals  = np.array(ll_short)[ll_short]
+    arr_dates = np.array(ll_dates)[ll_short]
+
+    filtered_list = [ev for ev, keep in zip(list_events, ll_short) if keep]
+
+    list_year = pd.DataFrame(
+        [ev[0].astype("datetime64[Y]").item().year for ev in filtered_list],
+        columns=["year"],
+    )
+    n_events_per_year = list_year.reset_index().groupby(["year"]).count()
+
+    return arr_vals, arr_dates, n_events_per_year
 
 
 def get_events_values(data, dates, arr_dates_oe, durations=[], time_resolution=None):
     """
+    Compute erosivity-relevant metrics for each event and each accumulation duration.
+
+    For each event and each duration in `durations`, a sliding-window convolution finds
+    the peak accumulated depth (prec_depth) and converts it to intensity (intensity_per_hour).
+    Kinetic energy (E_kin) and erosivity (EI30) are computed over the full event.
+
     Parameters
     ----------
-    data : np array
-        data of full dataset 
-    dates : np array
-        time of full dataset 
-    arr_dates_oe : TYPE
-        end and start of event, this is output from remove_short function.
-    durations: List
-        List of durations in minutes eg [30,60]
-    time_resolution = integer or float
-        time resolution in dataset in minutes
+    data : np.ndarray
+        Full precipitation time series [mm per time step].
+    dates : np.ndarray of np.datetime64
+        Timestamps aligned with data.
+    arr_dates_oe : np.ndarray, shape (N, 2)
+        Event (end, start) pairs as returned by remove_short.
+    durations : list of int
+        Accumulation window lengths [minutes], e.g. [30] for IMax30 or [15, 30] for both.
+    time_resolution : int or float
+        Data time step [minutes].
+
     Returns
     -------
-    dict_events : dict of pandas 
-        events per duration.
-        dict_events = {"10" : pd.DataFrame(columns=['year', 'event_start', 'event_end', 'event_peak', 'prec_depth',
-                                                      'intensity_per_hour', 'prec_accum', 'E_kin', 'erosivity'],}
-        Here explanation of each column:
-            year --> year of event
-           
-            event_start  --> event start [time]
-            event_end  --> event end [time]
-            event_peak --> time of peak which is given per accumulate duration, it is not peak of storm [time]
-            prec_depth --> Maximum accumulated depth for given duration [mm]
-            intensity_per_hour -->  Maximum precipitation intensity for given duration eg Imax30 [mm/h]
-            prec_accum  -->  Total accumulated depth for event [mm]
-            E_kin --> Ekin for event (kinetic energy of precipitation event) [kJ m^−2]
-            erosivity_EU --> Erosivity of event in [kJ/m^2 * mm/h = N/h], In EU erosivity factors are given in this unit
-                            NOTE!!!
-                            R factors (Erosivity) are often given in the unit MJ*mm/ha*hr (in US)
-                            To convert rainfall erosivity as given here in N/h to MJ*mm/ha*hr, it has to be multiplied by a factor of 10.
-            erosivity_US --> erosivity of event in MJ*mm/ha*hr
-        
+    dict_events : dict of pd.DataFrame
+        Keys are duration strings (e.g. '30'). Each DataFrame has columns:
+            year               : calendar year of event peak
+            event_start        : event start timestamp
+            event_end          : event end timestamp
+            event_peak         : timestamp of peak accumulation window
+            prec_depth         : maximum accumulated depth over the window [mm]
+            intensity_per_hour : peak window intensity [mm/h]  (= prec_depth * 60 / duration)
+            prec_accum         : total accumulated depth over the whole event [mm]
+            E_kin              : kinetic energy of the event [kJ m-2]
+            erosivity_EU       : event erosivity E_kin x IMax  [kJ m-2 mm h-1 = N h-1]
+            erosivity_US       : same in US units [MJ mm ha-1 h-1]  (= erosivity_EU x 10)
     """
+    if time_resolution is None or not durations:
+        raise ValueError("time_resolution and durations must both be provided.")
+
     dict_events = {}
-    
-    if time_resolution == None or not durations:
-        print("Warning !!!! Warning !!!! Warning !!!! Warning !!!! Warning !!!!")
-        print("Warning !!!! Warning !!!! Warning !!!! Warning !!!! Warning !!!!")
-        print("time resolution or durations not provided")
-    else:
-        for d in range(len(durations)):
-            arr_conv = np.convolve(data, np.ones(int(durations[d]/time_resolution),dtype=int),'same')
-        
-            # Convert time index to numpy array
-            time_index = dates.reshape(-1)
-        
-            # Use numpy indexing to get the max values efficiently
-            ll_vals = [] # Maximum accumulated depth for given duration 
-            ll_intensities = [] # Maximum precipitation intensity for given duration eg Imax30 mm/h
-            ll_accums = [] # Total accumulated depth for event 
-            ll_dates = [] # Time of peak for accumulate depth
-            ll_starts = [] #event start
-            ll_ends = [] #event end
-            ll_Ekins= [] # Ekin for event (kinetic energu of precipitation event)
-            ll_Res = [] # Erosivity of event
-            
-            for i in range(arr_dates_oe.shape[0]):
-                start_time_idx = np.searchsorted(time_index, arr_dates_oe[i, 1])
-                   
-                end_time_idx = np.searchsorted(time_index, arr_dates_oe[i, 0])
-                    
-                # Check if start and end times are the same
-                if start_time_idx == end_time_idx:
-                    ll_val = arr_conv[start_time_idx]
-                    ll_date = time_index[start_time_idx]
-                    ll_start = time_index[start_time_idx]
-                    ll_end = time_index[end_time_idx]
-                    
-                    ll_intesnity =  ll_val * 60 / durations[d] 
-                    
-                    # Get accumulated precpitaiton in event    
-                    ll_accum  = np.sum(data[start_time_idx])
-                    
-                    # Peak time
-                    ll_date = time_index[start_time_idx]
-                    
-                    # Depth at each step (increment)
-                    ll_depth = data[ start_time_idx]
-                    # Calculcate ekin_i
-                    ll_hourly_intensities = data[ start_time_idx] * 60 / time_resolution
-                    # Vectorize the function for calculcation ekin at increment t
-                    E_kin_i_vectorized = np.vectorize(E_kin_i)
-                    # Apply the function to get Ekin at increment t
-                    ll_Ekin_i = E_kin_i_vectorized(ll_hourly_intensities)
-                    ll_Ekin = np.sum(ll_Ekin_i * ll_depth)
-                    
-                    # the erosivity of rain event Re (N h−1)
-                    ll_Re = ll_Ekin * ll_intesnity
-                    
-                else:
-                    # do convolve inside of the event
-                    arr_conv2 = np.convolve(data[start_time_idx : end_time_idx + 1],
-                                           np.ones(int(durations[d] / time_resolution), dtype=int),
-                                           "same",
-                                       )
-                    
-                    
-                    # the +1 in end_time_index is because then we search by index but we want to includde last as well,
-                    # without, it slices eg. end index is 10, without +1 it slices 0 to 9 instead of 0 to 10 (stops 1 before)    
-                    # get index of ll_val within the sliced array
-                    #old version ll_idx_in_slice = np.nanargmax(arr_conv[start_time_idx:end_time_idx+1]) 
-                    ll_idx_in_slice = np.nanargmax(arr_conv2)
-                    
-                    # Adjust the index to refer to the original arr_conv
-                    ll_idx_in_arr_conv = start_time_idx + ll_idx_in_slice
-                    
-                    # Get max value -> peak
-                    #old version ll_val = arr_conv[ll_idx_in_arr_conv] 
-                    ll_val = arr_conv2[ll_idx_in_slice]
-                    
-                    # Get intensity in mm/h
-                    ll_intesnity =  ll_val * 60 / durations[d] 
-                    
-                    # Get accumulated precpitaiton in event    
-                    ll_accum  = np.sum(data[start_time_idx:end_time_idx+1])
-                    
-                    # Peak time
-                    ll_date = time_index[ll_idx_in_arr_conv]
-                    
-                    # Start and end 
-                    ll_start = time_index[start_time_idx]
-                    ll_end = time_index[end_time_idx]
-                    
-                    # Depth at each step (increment)
-                    ll_depth = data[start_time_idx:end_time_idx+1]
-                    # Calculcate ekin_i
-                    ll_hourly_intensities = data[start_time_idx:end_time_idx+1] * 60 / time_resolution
-                    # Vectorize the function for calculcation ekin at increment t
-                    E_kin_i_vectorized = np.vectorize(E_kin_i)
-                    # Apply the function to get Ekin at increment t
-                    ll_Ekin_i = E_kin_i_vectorized(ll_hourly_intensities)
-                    ll_Ekin = np.sum(ll_Ekin_i * ll_depth)
-                    
-                    # the erosivity of rain event Re (N h−1)
-                    ll_Re = ll_Ekin * ll_intesnity
-                    
-                ll_vals.append(ll_val)
-                ll_intensities.append(ll_intesnity)
-                ll_accums.append(ll_accum)
-                ll_dates.append(ll_date)
-                ll_starts.append(ll_start)
-                ll_ends.append(ll_end)
-                ll_Ekins.append(ll_Ekin)
-                ll_Res.append(ll_Re)
-            #years  of events events
-            ll_yrs=[arr_dates_oe[_,0].astype('datetime64[Y]').item().year for _ in range(arr_dates_oe.shape[0])]
-            
-            df_oe = pd.DataFrame({'year':ll_yrs,
-                                  'event_start': ll_starts,
-                                  'event_end': ll_ends,
-                                  'event_peak':ll_dates,
-                                  'prec_depth':ll_vals,
-                                  'intensity_per_hour': ll_intensities,
-                                  'prec_accum': ll_accums,
-                                  'E_kin':  ll_Ekins,
-                                  'erosivity_EU': ll_Res,
-                                  'erosivity_US': [x*10 for x in ll_Res]})
-            dict_events.update({f"{durations[d]}":df_oe})
-  
+    time_index = dates.reshape(-1)
+    n_events = arr_dates_oe.shape[0]
+
+    # Pre-compute start/end indices for all events at once (vectorized)
+    oe_end   = arr_dates_oe[:, 0].astype("datetime64[ns]")
+    oe_start = arr_dates_oe[:, 1].astype("datetime64[ns]")
+    start_indices = np.searchsorted(time_index, oe_start)
+    end_indices   = np.searchsorted(time_index, oe_end)
+
+    # Year array is the same for every duration -- compute once
+    ll_yrs = [oe_end[i].astype("datetime64[Y]").item().year for i in range(n_events)]
+
+    # Integer data avoids float accumulation errors in convolution sums
+    data_int = np.round(data * 10000).astype(np.int64)
+
+    E_kin_i_vectorized = np.vectorize(E_kin_i)
+
+    for d in range(len(durations)):
+        window_size = int(durations[d] / time_resolution)
+        ones_kernel = np.ones(window_size, dtype=np.int64)
+
+        ll_vals        = []
+        ll_intensities = []
+        ll_accums      = []
+        ll_dates       = []
+        ll_starts      = []
+        ll_ends        = []
+        ll_Ekins       = []
+        ll_Res         = []
+
+        for i in range(n_events):
+            si = start_indices[i]
+            ei = end_indices[i]
+
+            if si == ei:
+                ll_val    = data[si]
+                ll_date   = time_index[si]
+                ll_start  = time_index[si]
+                ll_end    = time_index[ei]
+                ll_depth  = data[si]
+                ll_accum  = float(np.sum(data[si]))
+                ll_hourly_intensities = data[si] * 60 / time_resolution
+            else:
+                # +1 on end so slice includes the last step
+                # Integer convolution avoids float accumulation errors
+                arr_conv_int = np.convolve(data_int[si:ei + 1], ones_kernel, "same")
+                ll_idx   = np.nanargmax(arr_conv_int)
+                ll_val   = arr_conv_int[ll_idx] / 10000.0
+                ll_date  = time_index[si + ll_idx]
+                ll_start = time_index[si]
+                ll_end   = time_index[ei]
+                ll_depth = data[si:ei + 1]
+                ll_accum = float(np.sum(data[si:ei + 1]))
+                ll_hourly_intensities = data[si:ei + 1] * 60 / time_resolution
+
+            ll_intensity = ll_val * 60 / durations[d]
+            ll_Ekin_i    = E_kin_i_vectorized(ll_hourly_intensities)
+            ll_Ekin      = float(np.sum(ll_Ekin_i * ll_depth))
+            ll_Re        = ll_Ekin * ll_intensity
+
+            ll_vals.append(ll_val)
+            ll_intensities.append(ll_intensity)
+            ll_accums.append(ll_accum)
+            ll_dates.append(ll_date)
+            ll_starts.append(ll_start)
+            ll_ends.append(ll_end)
+            ll_Ekins.append(ll_Ekin)
+            ll_Res.append(ll_Re)
+
+        df_oe = pd.DataFrame({
+            'year':               ll_yrs,
+            'event_start':        ll_starts,
+            'event_end':          ll_ends,
+            'event_peak':         ll_dates,
+            'prec_depth':         ll_vals,
+            'intensity_per_hour': ll_intensities,
+            'prec_accum':         ll_accums,
+            'E_kin':              ll_Ekins,
+            'erosivity_EU':       ll_Res,
+            'erosivity_US':       [x * 10 for x in ll_Res],
+        })
+        dict_events[f"{durations[d]}"] = df_oe
+
     return dict_events
 
-# Define the function to calculate kinetic energy per time interval
 def E_kin_i(intensity):
-    # based on DIN 19708
-    # which is based on 
-    # Rogler, H. and Schwertmann, U.: 
-    # Erosivität der Niederschläge und Isoerodentkarte Bayerns, J. Rural Engi. Developm., 22, 99–112, 1981. 
-    
-    #The upper limit is set because raindrops do not continue to grow significantly indefinitely; 
-    #their size and fall velocity approach practical maxima” (Van Dijk et al., 2002).
-    
+    """
+    Unit kinetic energy of rainfall [kJ m-2 mm-1] as a function of intensity [mm/h].
+
+    Formula per DIN 19708:2017-08, based on Rogler & Schwertmann (1981).
+    Equivalent to the USLE metric form from Foster et al. (1981) / Williams & Sheridan (1991) eq(3).
+    Upper limit at 76.2 mm/h: raindrop size and terminal velocity approach a physical maximum
+    at high intensities (Van Dijk et al., 2002).
+
+    Parameters
+    ----------
+    intensity : float
+        Rainfall intensity [mm/h].
+
+    Returns
+    -------
+    float
+        Unit kinetic energy [kJ m-2 mm-1].
+    """
     if intensity < 0.05:
         return 0
     elif intensity >= 76.2:
         return 28.33 * 10**-3
     else:
         return (11.89 + 8.73 * np.log10(intensity)) * 10**-3
-    
-def E_kin_i_BrFr(intensity): 
-    #(Brown and Foster, 1987)
-    # not in use, buyt if it's used, it gives E_kin in US units ha instead of EU calculation,
-    # so it will messed other things, rather dont use it, maybe just for testing.
+
+
+def E_kin_i_BrFr(intensity):
+    """
+    Unit kinetic energy [MJ ha-1 mm-1] after Brown & Foster (1987) -- US units.
+
+    NOT used in the main pipeline. If substituted for E_kin_i it would produce
+    erosivity in US units directly, breaking the EU-unit pathway and the x10 conversion.
+    Kept here for reference / testing only.
+    """
     return 0.29*(1-0.72*np.exp(-0.05*intensity))
     
 def get_only_erosivity_events(df, accum_threshold=12.7, intensity_threshold=12.7, use_both_thresholds=True):
     """
-    Wischmeier 1959, 1979
-    Also used in Rogler and Schwertmann 1981 and DIN 19708:2017-08
+    Filter erosivity events using the Wischmeier (1959, 1979) / Wischmeier & Smith (1978) criteria,
+    also adopted by Rogler & Schwertmann (1981) and DIN 19708:2017-08.
+
+    An event is erosive if either:
+        (i)  total accumulated event depth  >= accum_threshold    [mm]  (default 12.7 mm = 0.5 in)
+        (ii) peak window intensity          >= intensity_threshold [mm/h] (default 12.7 mm/h)
+
+    The 12.7 mm/h default for criterion (ii) is IMax30 — the maximum 30-min intensity — which is
+    the standard Wischmeier (1959) threshold.  Its value originates from the assumption that the
+    marginal erosive event concentrates 6.35 mm (0.25 in) in 15 min with negligible rain outside
+    that 15-min window.  Under this assumption, the 30-min rolling window always captures those
+    6.35 mm, giving IMax30 = 6.35 * 60/30 = 12.7 mm/h.
+
+    The same physical scenario observed at different accumulation window sizes would appear as:
+        15-min window  →  IMax15 = 6.35 * 60/15 = 25.4 mm/h
+        30-min window  →  IMax30 = 6.35 * 60/30 = 12.7 mm/h  (standard default)
+        60-min window  →  IMax60 = 6.35 * 60/60 =  6.35 mm/h
+
+    These are NOT interchangeable thresholds to swap by resolution — 12.7 mm/h for IMax30 is the
+    fixed criterion.  The table only illustrates how the same assumed event translates across window
+    sizes.  The 25.4 mm/h figure further assumes that all 6.35 mm falls uniformly over the full
+    15 min, which is rarely the case in practice.
 
     Parameters
     ----------
-    df : TYPE
-        DESCRIPTION.
-    accum_threshold : TYPE, optional
-        DESCRIPTION. The default is 12.7.
-    intensity_threshold : TYPE, optional
-        DESCRIPTION. The default is 12.7.
-    use_both_thresholds : TYPE, optional
-        DESCRIPTION. The default is True.
+    df : pd.DataFrame
+        Output of get_events_values. prec_depth and intensity_per_hour must correspond to the
+        same accumulation window (e.g. both from durations=[30] for IMax30).
+    accum_threshold : float, optional
+        Minimum total event depth [mm]. Default 12.7 (Wischmeier 1959).
+    intensity_threshold : float, optional
+        Minimum peak window intensity [mm/h]. Default 12.7 (IMax30 equivalent of 6.35 mm/15 min).
+    use_both_thresholds : bool, optional
+        If True, apply criteria (i) OR (ii). If False, apply only criterion (ii). Default True.
 
     Returns
     -------
-    filtered_df : TYPE
-        DESCRIPTION.
-
+    filtered_df : pd.DataFrame
     """
     if use_both_thresholds:
         filtered_df = df[(df['intensity_per_hour'] >= intensity_threshold) | (df['prec_accum'] >= accum_threshold)]
     else:
         filtered_df = df[(df['intensity_per_hour'] >= intensity_threshold)]
         
-    filtered_df = filtered_df.reset_index(drop=True)    
+    filtered_df = filtered_df.reset_index(drop=True)
     return filtered_df
 
 
-def get_only_erosivity_events_Renard(df, accum_threshold=12.7, depth_threshold=12.7):
+def find_optimal_thr_imax30(df_all_events, target_count, use_both_thresholds=False):
     """
-    This function is consistent with Renard 1997 (RUSLE)
-    
-   criteria for the identification of an erosive event are given:
-        (i) the cumulative rainfall of an event is greater than 12.7 mm, or 
-        (ii) the event has at least one peak that is greater than 6.35 mm during a period of 15 min 
-        (or 12.7 mm during a period of 30 min). 
-    
-    Keep in mind that this is designed for the high temporal resolution data. where we can estimate correctly Imax15 and Imax30.
-    If we have hourly data, this treshold must be adjusted. 
-    
+    Find the intensity threshold that minimises |len(erosivity_events) - target_count|.
+
+    Because the filtered event count is a monotonically non-increasing step
+    function of the threshold, the global minimum is found by evaluating the
+    objective at every unique intensity_per_hour value (O(n log n)).
+
+    Typical use: match the number of 60-min erosivity events to the number of
+    5-min erosivity events by tuning thr_imax30.
+
     Parameters
     ----------
-    df : TYPE
-        DESCRIPTION.
-    accum_threshold : TYPE, optional
-        DESCRIPTION. The default is 12.7.
-    intensity_threshold : TYPE, optional
-        DESCRIPTION. The default is 12.7.
-    use_both_thresholds : TYPE, optional
-        DESCRIPTION. The default is True.
+    df_all_events : pd.DataFrame
+        Full event DataFrame before intensity filtering
+        (e.g. df_erosivity_all_events_60).
+    target_count : int
+        Desired number of erosivity events (e.g. len(df_erosivity_5)).
+    use_both_thresholds : bool
+        Passed through to get_only_erosivity_events.
 
     Returns
     -------
-    filtered_df : TYPE
-        DESCRIPTION.
-
+    thr_opt : float
+        Optimal threshold [mm/h].
+    achieved_count : int
+        Number of events at thr_opt.
+    min_diff : int
+        Residual |achieved_count - target_count| (0 = exact match).
     """
+    # count(thr) is a step function that only changes when thr crosses an actual
+    # data value, so testing every real number is pointless — unique values are enough
+    unique_thr = np.sort(df_all_events['intensity_per_hour'].unique())
+    counts = np.array([
+        len(get_only_erosivity_events(df_all_events,
+                                      intensity_threshold=float(t),
+                                      use_both_thresholds=use_both_thresholds))
+        for t in unique_thr
+    ])
+    diffs = np.abs(counts - target_count)
+    # among ties pick the lowest threshold (keeps more events)
+    idx_opt = int(np.where(diffs == diffs.min())[0][0])
+    return float(unique_thr[idx_opt]), int(counts[idx_opt]), int(diffs[idx_opt])
 
+
+def get_only_erosivity_events_Renard(df, accum_threshold=12.7, depth_threshold=6.35, time_resolution=None):
+    """
+    Filter erosivity events using the Renard et al. (1997) RUSLE criteria.
+
+    An event is erosive if either:
+        (i)  total accumulated event depth >= accum_threshold  [mm]  (default 12.7 mm)
+        (ii) maximum 15-min accumulated depth >= depth_threshold [mm] (default 6.35 mm = 0.25 in)
+
+    Criterion (ii) requires data at <= 15-min resolution so that prec_depth
+    reflects a true 15-min window. If time_resolution > 15, this function raises
+    a ValueError — use get_only_erosivity_events for coarser data.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Output of get_events_values with durations=[15].
+    accum_threshold : float, optional
+        Minimum total event depth [mm]. Default 12.7.
+    depth_threshold : float, optional
+        Minimum 15-min accumulated depth [mm]. Default 6.35 (Renard 1997).
+    time_resolution : int or float, optional
+        Data time step in minutes. Must be <= 15 to apply criterion (ii).
+
+    Returns
+    -------
+    filtered_df : pd.DataFrame
+    """
+    if time_resolution is not None and time_resolution > 15:
+        raise ValueError(
+            f"time_resolution={time_resolution} min is too coarse for the Renard 6.35 mm/15-min "
+            f"criterion. Use get_only_erosivity_events for data coarser than 15 min."
+        )
     filtered_df = df[(df['prec_depth'] >= depth_threshold) | (df['prec_accum'] >= accum_threshold)]
+    return filtered_df.reset_index(drop=True)
 
-    filtered_df = filtered_df.reset_index(drop=True)    
-    return filtered_df
-
-def boostrapping_erosivity_60min ( df_erosivity, 
-                                  niter=1000,
-                                  M=None):
+def boostrapping_erosivity_60min(df_erosivity, niter=1000, M=None):
     """
-    Warning, this function is for boostrapping erosivity out of 60min dataset
-    based on event peak year.
+    Bootstrap annual erosivity statistics from a 60-min erosivity DataFrame.
 
-    
+    Resamples calendar years with replacement to estimate uncertainty in
+    mean annual erosivity, event count, and mean intensity.
+
     Parameters
     ----------
-    df_erosivity : pandas
-        df_erosivity is pandas which is given 
-        by fuctnion "get_only_erosivity_events" and 
-        after calculcting the adjusted erosivity
-        for 60 min data
-        
+    df_erosivity : pd.DataFrame
+        Output of get_only_erosivity_events with erosivity_US_adj column added.
     niter : int, optional
-        N of boostrap samples (N of boostrap iteration). The default is 1000.
-        
+        Number of bootstrap iterations. Default 1000.
     M : int, optional
-        Number of boostrap sample lenght in years.
-        eg. 10 gives 10 years data lenght etc.
+        Number of years per bootstrap sample. Defaults to the number of unique
+        years in the dataset.
 
     Returns
     -------
-    f_bootstrap_summary
-
+    df_bootstrap_summary : pd.DataFrame
+        One row per bootstrap sample with columns: mean_annual_events,
+        mean_annual_Imax, mean_rain_depth, average_annual_erosivity.
     """
     # Ensure 'event_peak' is datetime
     df_erosivity['event_peak'] = pd.to_datetime(df_erosivity['event_peak'])
@@ -698,39 +789,33 @@ def boostrapping_erosivity_60min ( df_erosivity,
     return df_bootstrap_summary
 
     
-def boostrapping_erosivity_CPM_60min ( df_erosivity, 
-                                      niter=1000,
-                                      M=None,
-                                      randy=None):
+def boostrapping_erosivity_CPM_60min(df_erosivity, niter=1000, M=None, randy=None):
     """
-    Warning, this function is for boostrapping erosivity out of 60min dataset
-    based on event peak year.
+    Bootstrap annual erosivity statistics, with optional external sample index (CPM use case).
 
-    
+    Same as boostrapping_erosivity_60min but accepts a pre-defined `randy` array so that
+    bootstrap samples can be shared across multiple datasets (e.g. climate model ensembles).
+
     Parameters
     ----------
-    df_erosivity : pandas
-        df_erosivity is pandas which is given 
-        by fuctnion "get_only_erosivity_events" and 
-        after calculcting the adjusted erosivity
-        for 60 min data
-        
+    df_erosivity : pd.DataFrame
+        Output of get_only_erosivity_events with erosivity_US_adj column added.
     niter : int, optional
-        N of boostrap samples (N of boostrap iteration). The default is 1000.
-        
+        Number of bootstrap iterations. Ignored if randy is provided. Default 1000.
     M : int, optional
-        Number of boostrap sample lenght in years.
-        eg. 10 gives 10 years data lenght etc.
-        
-    randy: numpy array
-        predefined random requance of bootstrap samples
-        each row must have set of N years, lenght of sample isn't limited.
-        If randy is given, the niter and M is ignored.
+        Years per bootstrap sample. Ignored if randy is provided. Defaults to
+        the number of unique years in the dataset.
+    randy : np.ndarray of int, optional
+        Pre-defined sample index array, shape (niter, M). Values must be either:
+        - 1-based consecutive integers (1..N) for fast index mapping, or
+        - arbitrary integers mapped to the sorted unique years in df_erosivity.
+        If provided, niter and M are ignored.
 
     Returns
     -------
-    f_bootstrap_summary
-
+    df_bootstrap_summary : pd.DataFrame
+        One row per bootstrap sample with columns: mean_annual_events,
+        mean_annual_Imax, mean_rain_depth, average_annual_erosivity.
     """
     # Ensure 'event_peak' is datetime
     df_erosivity['event_peak'] = pd.to_datetime(df_erosivity['event_peak'])

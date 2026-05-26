@@ -1,22 +1,35 @@
 # -*- coding: utf-8 -*-
 """
-Created on Sat Nov 30 11:55:27 2024
+Benchmarks pyErosivity against RIST and compares 5-min vs 60-min erosivity.
 
-@author: Petr
+Uses ONLY the single intensity criterion (use_both_thresholds=False):
+    IMax30 >= intensity_threshold [mm/h]
+consistent with RIST default (12.7 mm/h) and Fischer et al. (2018, HESS).
 
-This file shows how to apply pyerosivity package.
+WARNING — SINGLE THRESHOLD VS FULL RUSLE
+-----------------------------------------
+The full RUSLE definition (Wischmeier & Smith 1978; Renard et al. 1997) uses
+TWO criteria — erosive if EITHER:
+    (i)  accumulated event depth >= 12.7 mm, OR
+    (ii) maximum 15-min depth   >= 6.35 mm
 
-1)
-It reads 5min erosivity output from RIST - Rainfall Intensity Summarization Tool.
-https://www.ars.usda.gov/southeast-area/oxford-ms/national-sedimentation-laboratory/watershed-physical-processes-research/research/rist/rist-rainfall-intensity-summarization-tool/
+Criterion (ii) is a depth criterion, not a sustained intensity.  Converting it
+to IMax15 >= 25.4 mm/h assumes 6.35 mm falls uniformly over the full 15 min,
+which is rarely the case in practice.
 
-2) It calculates erosivity out of 5min data and compare them with RIST output
+Panagos et al. restated (ii) as peak 30-min depth >= 12.7 mm — identical to
+criterion (i) and therefore logically redundant.  The correct adaptation to
+30-min data is to keep the 6.35 mm depth but widen the window to 30 min
+(EURADCLIM approach), not to double the depth threshold.
 
-3) It calculates eorisvity out of 60min data and compare them with 5min resolution
+Fischer et al. (2018) lowered the IMax30 threshold for coarser resolutions,
+assuming the 6.35 mm peak concentrates within a sub-window while the rest of
+the hour is nearly dry.  The optimisation in this script follows the same logic:
+find the IMax30 threshold that reproduces the 5-min event count, implicitly
+correcting for resolution-induced under-detection.
 
-4) It applies adjustment of IMAX threshold with temporal correction factor]
-
-5) All results are plotted based on erosive events with different methods and data.
+Results are comparable to RIST only when RIST is run with the strict
+single-threshold (IMax30 = 12.7 mm/h), not the full dual-criterion RUSLE.
 """
 
 import pandas as pd
@@ -31,6 +44,7 @@ from src.pyErosivity import get_events
 from src.pyErosivity import remove_short 
 from src.pyErosivity import get_events_values 
 from src.pyErosivity import get_only_erosivity_events
+from src.pyErosivity import find_optimal_thr_imax30
 
 #%%
 save_results = True
@@ -74,8 +88,7 @@ name_col = "vals"        # Name of column containing data to extract
 use_both_thresholds = False # True Defined erosivity event as intensity >= threshold1 & accum_prec >= threshold2
                             #False Defined erosivity event as intensity >= threshold1
                             #here we have false cause we set RIST for single threshold on intensity
-#Following setting source https://hess.copernicus.org/articles/22/6505/2018/
-thr_imax30 = 12.7         #  adjusted threshold for imax30 due to lower resolution data 
+thr_imax30 = 12.7         # standard Wischmeier IMax30 threshold [mm/h]
 # == # == # SETTING # == # == # SETTING # == # ==
 # == # == # == # == # == # == # == # == # == # == 
 
@@ -113,29 +126,27 @@ else:
 df_arr = np.array(data[name_col])
 df_dates = np.array(data.index)
 
-#extract indexes of events
-#these are time-wise indexes => returns list of np arrays with np.timeindex
+# extract events as list of np.datetime64 arrays
 idx_events=get_events(data = df_arr,
-                      dates = df_dates, 
+                      dates = df_dates,
                       separation = separation,
                       min_rain = min_rain,
-                      name_col = name_col,  
+                      name_col = name_col,
                       check_gaps = False)
-    
-#get events by removing too short events
-#returns boolean array, dates of OE in TO, FROM format, and count of OE in each years
-arr_vals,arr_dates,n_events_per_year=remove_short(idx_events, 
-                                                    time_resolution=time_resolution, 
+
+# remove events shorter than min_ev_dur; returns (end, start) date pairs and yearly counts
+arr_vals,arr_dates,n_events_per_year=remove_short(idx_events,
+                                                    time_resolution=time_resolution,
                                                     min_ev_dur=min_ev_dur)
 
-#assign events events values by given durations, values are in depth per duration, NOT in intensity mm/h
+# compute per-event metrics (prec_depth, intensity_per_hour, E_kin, erosivity) for each duration
 dict_events= get_events_values(data=df_arr,
-                               dates=df_dates, 
+                               dates=df_dates,
                                arr_dates_oe=arr_dates,
                                durations=durations,
                                time_resolution=time_resolution)
 
-# Here example for 30 minutes, so it extract 30 out of this dict_events
+# extract 30-min results
 df_erosivity_all_events = dict_events["30"].copy()
 df_erosivity_5 = get_only_erosivity_events(df_erosivity_all_events, 
                                          use_both_thresholds=use_both_thresholds,
@@ -165,10 +176,9 @@ name_col = "vals"        # Name of column containing data to extract
 use_both_thresholds = False # True Defined erosivity event as intensity >= threshold1 & accum_prec >= threshold2
                             # False Defined erosivity event as intensity >= threshold1
                             # --> here we have false cause we set RIST for single threshold on intensity                      
-#Following setting source https://hess.copernicus.org/articles/22/6505/2018/
-thr_imax30 = 5.79       #  adjusted threshold for imax30 due to lower resolution data 
-#temporal scale factor is from German study, it is better to estimate own scaling factor that will match data
-temporal_scale_factor = 1.9 # https://hess.copernicus.org/articles/22/6505/2018/
+# Fischer et al. (2018) https://hess.copernicus.org/articles/22/6505/2018/
+thr_imax30 = 5.79         # German IMax30 threshold for 60-min data [mm/h], scaled from 12.7 mm/h
+temporal_scale_factor = 1.9 # temporal scaling factor for 60-min erosivity (Fischer et al. 2018)
 # == # == # SETTING # == # == # SETTING # == # ==
 # == # == # == # == # == # == # == # == # == # == 
 
@@ -207,41 +217,34 @@ else:
 df_arr = np.array(data[name_col])
 df_dates = np.array(data.index)
 
-#extract indexes of events
-#these are time-wise indexes => returns list of np arrays with np.timeindex
+# extract events as list of np.datetime64 arrays
 idx_events=get_events(data = df_arr,
-                      dates = df_dates, 
+                      dates = df_dates,
                       separation = separation,
                       min_rain = min_rain,
-                      name_col = name_col,  
+                      name_col = name_col,
                       check_gaps = False)
 
-#idx_events = get_events_Renard_RUSLE(data = df_arr,
-#                                    dates = df_dates, 
-#                                    separation = separation, 
-#                                    time_resolution= time_resolution,
-#                                    check_gaps=False)
-    
-#get events by removing too short events
-#returns boolean array, dates of OE in TO, FROM format, and count of OE in each years
-arr_vals,arr_dates,n_events_per_year=remove_short(idx_events, 
-                                                    time_resolution=time_resolution, 
+# remove events shorter than min_ev_dur; returns (end, start) date pairs and yearly counts
+arr_vals,arr_dates,n_events_per_year=remove_short(idx_events,
+                                                    time_resolution=time_resolution,
                                                     min_ev_dur=min_ev_dur)
 
-#assign events events values by given durations, values are in depth per duration, NOT in intensity mm/h
+# compute per-event metrics (prec_depth, intensity_per_hour, E_kin, erosivity) for each duration
 dict_events= get_events_values(data=df_arr,
-                               dates=df_dates, 
+                               dates=df_dates,
                                arr_dates_oe=arr_dates,
                                durations=durations,
                                time_resolution=time_resolution)
 
-# Here example for 60 minutes, so it extract 60 out of this dict_events
+# extract 60-min results; for 60-min data IMax30 = IMax60 = single hourly reading (Williams & Sheridan 1991)
 df_erosivity_all_events_60 = dict_events["60"].copy()
 
 # Get erosivity events with different intesnity threshold, this threshold should be optimized based on needs.
-df_erosivity_60 = get_only_erosivity_events(df_erosivity_all_events_60, 
-                                            use_both_thresholds=use_both_thresholds, 
+df_erosivity_60 = get_only_erosivity_events(df_erosivity_all_events_60,
+                                            use_both_thresholds=use_both_thresholds,
                                             intensity_threshold=thr_imax30)
+n_events_german_60 = len(df_erosivity_60)  # store before optimizer overwrites
 
 #If temporal adjustment for resolution is needed, again, this scale factor should be better determined by needs
 df_erosivity_60["erosivity_US_adj"] = df_erosivity_60["erosivity_US"] * temporal_scale_factor
@@ -256,131 +259,118 @@ elapsed_time = end_time - start_time
 print(f"Calculation of erosivity of 60min resolution : {elapsed_time:.2f} seconds")
 
 #%%
-# == # == # == # == # == # == # == # == # == # == 
+# == # == # == # == # == # == # == # == # == # ==
+# == # OPTIMIZE thr_imax30 FOR 60min DATA # == # ==
+# == # == # == # == # == # == # == # == # == # ==
+target_count = len(df_erosivity_5)
+thr_opt_60, achieved_count_60, residual = find_optimal_thr_imax30(
+    df_erosivity_all_events_60, target_count, use_both_thresholds=use_both_thresholds)
+
+print(f"Target event count  (5-min data) : {target_count}")
+print(f"Optimal thr_imax30  (60-min data): {thr_opt_60:.4f} mm/h")
+print(f"Achieved event count             : {achieved_count_60}")
+print(f"Residual |achieved - target|     : {residual}")
+if residual == 0:
+    print("Exact match found.")
+else:
+    print("No exact match possible (step-function gap at this threshold).")
+
+# Re-run 60min erosivity with the optimal threshold
+df_erosivity_60 = get_only_erosivity_events(df_erosivity_all_events_60,
+                                            use_both_thresholds=use_both_thresholds,
+                                            intensity_threshold=thr_opt_60)
+df_erosivity_60["erosivity_US_adj"] = df_erosivity_60["erosivity_US"] * temporal_scale_factor
+if save_results:
+    df_erosivity_60.to_parquet(f"out/{station_num}_erosivity_60min.parquet.gzip", compression="gzip")
+
+#%%
+# == # == # == # == # == # == # == # == # == # ==
 # == # == # COMPARSION # == # COMPARISON # == # ==
 # == # == # PLOTS # == # PLOTS # == # ==# ==# ==
 
-# There are a few problems that selected methods do not return same number of erosivity events
-# This is due to different approach between RIST , our calculcation wit t=5min and t=60min
-# It is absolutely expected behavior and we will work on adjustments later 
-
-df_erosivity_5["erosivity_US"]
-df_erosivity_60["erosivity_US_adj"] 
-
-df_erosivity_5min_RIST['date'] = df_erosivity_5min_RIST.index.date  # Convert index to 'yyyy-mm-dd'
+df_erosivity_5min_RIST['date'] = df_erosivity_5min_RIST.index.date
 df_erosivity_5['date'] = df_erosivity_5['event_start'].dt.date
 df_erosivity_60['date'] = df_erosivity_60['event_start'].dt.date
-#for clarity sake, we renamed columns
-df_erosivity_60 = df_erosivity_60.rename(columns={"erosivity_US_adj" : "erosivity_US_adj_60",
-                                                  "erosivity_US" :  "erosivity_US_60"})
-df_erosivity_5min_RIST = df_erosivity_5min_RIST.rename(columns={"EI30" : "RIST_EI30"})
-df_erosivity_5 = df_erosivity_5.rename(columns={"erosivity_US" : "erosivity_US_5"})
 
+df_erosivity_60 = df_erosivity_60.rename(columns={"erosivity_US_adj": "erosivity_US_adj_60",
+                                                   "erosivity_US": "erosivity_US_60"})
+df_erosivity_5min_RIST = df_erosivity_5min_RIST.rename(columns={"EI30": "RIST_EI30"})
+df_erosivity_5 = df_erosivity_5.rename(columns={"erosivity_US": "erosivity_US_5"})
 
+# Pairwise merges — each subplot uses only its two relevant datasets,
+# so no events are dropped because they are missing in a third dataset
+df_cmp_RIST_5  = pd.merge(df_erosivity_5min_RIST[['date', 'RIST_EI30']],
+                           df_erosivity_5[['date', 'erosivity_US_5']], on='date', how='inner')
+df_cmp_60_5    = pd.merge(df_erosivity_5[['date', 'erosivity_US_5']],
+                           df_erosivity_60[['date', 'erosivity_US_60']], on='date', how='inner')
+df_cmp_60adj_5 = pd.merge(df_erosivity_5[['date', 'erosivity_US_5']],
+                           df_erosivity_60[['date', 'erosivity_US_adj_60']], on='date', how='inner')
 
-result = pd.merge(df_erosivity_5min_RIST, df_erosivity_5, on='date', how='inner')
-# Merge the result with the new dataset
-final_result = pd.merge(result, df_erosivity_60 , on='date', how='inner')
-df_comparison = final_result[['date', 'RIST_EI30', 'erosivity_US_5', 'erosivity_US_60', 'erosivity_US_adj_60']]
-del result, final_result #clean not needed dataframes
-
-# == # == # == # SAVE RESULTS # == # == == # == # 
+# == # == # == # SAVE RESULTS # == # == == # == #
 if save_results:
+    df_comparison = pd.merge(df_cmp_RIST_5,
+                             df_erosivity_60[['date', 'erosivity_US_60', 'erosivity_US_adj_60']],
+                             on='date', how='inner')
     df_comparison.to_parquet(f"out/{station_num}_erosivity_comparison.parquet.gzip", compression="gzip")
 
-# == # == # == # Plots # == # == == # == # 
-# Define your x and y pairs
+# == # == # == # Plots # == # == == # == #
 x = 'erosivity_US_5'
 x_label = "Re_5min"
 pairs = [
-    ('RIST_EI30', 'Re_RIRST_5min'),
-    ('erosivity_US_60', 'Re_60min'),
-    ('erosivity_US_adj_60', 'Re_60min_corr')
+    (df_cmp_RIST_5,   'RIST_EI30',          'Re_RIST_5min'),
+    (df_cmp_60_5,     'erosivity_US_60',     'Re_60min_opt'),
+    (df_cmp_60adj_5,  'erosivity_US_adj_60', 'Re_60min_opt_corr'),
 ]
 
-# Set up the plot grid
 axs_limit = 1400
 fig, axs = plt.subplots(2, 2, figsize=(8.5, 8))
 fig.subplots_adjust(hspace=0.4, wspace=0.4)
-
-# Hide the last subplot to make space for the custom legend
 axs[1, 1].axis('off')
 
-# Create empty list to hold legend elements
 legend_elements = []
-scatter_plot = None  # To hold the scatter plot entry
+scatter_plot = None
 
-# Loop through each pair and plot
-colors = ['blue', 'green', 'red']  # Colors for the regression lines
-for i, (y_col, label) in enumerate(pairs):
-    ax = axs[i // 2, i % 2]  # Choose the appropriate subplot
-    
-    # Scatter plot (black points) for each subplot
-    scatter_plot = ax.scatter(df_comparison[x], df_comparison[y_col], color='black', label="Erosivity in [MJ*mm/ha*hr]")
-    
-    # Linear Regression
-    X = df_comparison[[x]]  # Independent variable (reshape to 2D)
-    y = df_comparison[y_col]  # Dependent variable
+colors = ['blue', 'green', 'red']
+for i, (df_pair, y_col, label) in enumerate(pairs):
+    ax = axs[i // 2, i % 2]
+
+    scatter_plot = ax.scatter(df_pair[x], df_pair[y_col], color='black', label="Erosivity in [MJ*mm/ha*hr]")
+
+    X = df_pair[[x]]
+    y = df_pair[y_col]
     model = LinearRegression()
     model.fit(X, y)
-    
-    # Predict and plot the regression line
+
     y_pred = model.predict(X)
-    reg_line, = ax.plot(df_comparison[x], y_pred, color=colors[i], label=f"Regression: {label}")
-    
-    # Add the identity line (y = x) as a dashed black line
-    identity_line, = ax.plot(np.linspace(0, axs_limit, 100), np.linspace(0, axs_limit, 100), 
+    reg_line, = ax.plot(df_pair[x], y_pred, color=colors[i], label=f"Regression: {label}")
+
+    identity_line, = ax.plot(np.linspace(0, axs_limit, 100), np.linspace(0, axs_limit, 100),
                              color='black', linestyle='--', linewidth=0.8, label='Identity Line')
-    
-    # Calculate R²
-    r2 = model.score(X, y)
-    
-    # Calculate RMSE between actual x and y (point-based)
-    rmse = sqrt(mean_squared_error(df_comparison[x], df_comparison[y_col]))
-    
-    # Calculate Bias (mean of y/x)
-    bias = np.mean(df_comparison[y_col] / df_comparison[x])
-    
-    # Add R², RMSE, and Bias to the plot
-    ax.text(0.05, 0.95, f"R²: {r2:.2f}\nRMSE: {rmse:.2f}\nMBR: {bias:.2f}", 
-            transform=ax.transAxes, 
-            fontsize=10, 
-            verticalalignment='top', 
-            horizontalalignment='left', 
-            color='black',
+
+    r2   = model.score(X, y)
+    rmse = sqrt(mean_squared_error(df_pair[x], df_pair[y_col]))
+    bias = np.mean(df_pair[y_col] / df_pair[x])
+
+    ax.text(0.05, 0.95, f"R²: {r2:.2f}\nRMSE: {rmse:.2f}\nMBR: {bias:.2f}",
+            transform=ax.transAxes, fontsize=10, verticalalignment='top',
+            horizontalalignment='left', color='black',
             bbox=dict(facecolor='white', edgecolor='black', boxstyle='round,pad=0.5'))
-    # Set axis limits
     ax.set_xlim(0, axs_limit)
     ax.set_ylim(0, axs_limit)
-    
-    # Labels (no title as requested)
-    # Labels (use x_label and label from the loop)
-    ax.set_xlabel(f'{x_label} [MJ*mm/ha*hr]')  # Dynamically set x-axis label
-    ax.set_ylabel(f'{label} [MJ*mm/ha*hr]')  # Dynamically set y-axis label
-
-    # Set x and y ticks with a step of 200 starting from 0
-    ax.set_xticks(np.arange(0, axs_limit+1, 200))  # x-ticks from 0 to 1300 with step size 200
-    ax.set_yticks(np.arange(0, axs_limit+1, 200))  # y-ticks from 0 to 1300 with step size 200
-
-    # Add grid
+    ax.set_xlabel(f'{x_label} [MJ*mm/ha*hr]')
+    ax.set_ylabel(f'{label} [MJ*mm/ha*hr]')
+    ax.set_xticks(np.arange(0, axs_limit + 1, 200))
+    ax.set_yticks(np.arange(0, axs_limit + 1, 200))
     ax.grid(True)
-    
+
     if identity_line.get_label() not in [elem[0].get_label() for elem in legend_elements]:
         legend_elements.append((identity_line, 'Identity Line'))
-
-    # Add legend elements to list (avoid duplicates by checking if already added)
     if reg_line not in [elem[0] for elem in legend_elements]:
         legend_elements.append((reg_line, f"Regression: {label}"))
 
-# Create a custom legend using all legend elements
-# Only add the scatter plot once to avoid duplicates
-fig.legend([scatter_plot] + [elem[0] for elem in legend_elements], 
-           ['Erosivity Re in [MJ*mm/ha*hr]'] + [elem[1] for elem in legend_elements], 
-           loc='center', 
-           fontsize=14, 
-           frameon=False, 
-           title="Legend", 
-           title_fontsize=16, 
+fig.legend([scatter_plot] + [elem[0] for elem in legend_elements],
+           ['Erosivity Re in [MJ*mm/ha*hr]'] + [elem[1] for elem in legend_elements],
+           loc='center', fontsize=14, frameon=False, title="Legend", title_fontsize=16,
            bbox_to_anchor=(0.7, 0.3))
 fig.suptitle(f"{station_num} Erosivity Re in [MJ*mm/ha*hr] for events", fontsize=14, fontweight='bold', y=0.93)
 if save_results:
@@ -388,42 +378,31 @@ if save_results:
 plt.show()
 
 
-
-
 # Get lengths of the DataFrames
 lengths = [
-    ('RE 5 min from RIST', len(df_erosivity_5min_RIST)),
-    ('Re 5min', len(df_erosivity_5)),
-    ('Re 60min \n(German IMax30 threshold) \n5.79', len(df_erosivity_60))  
+    ('RE 5 min from RIST',                                    len(df_erosivity_5min_RIST)),
+    ('Re 5min',                                               len(df_erosivity_5)),
+    (f'Re 60min\n(German thr_imax30 = {thr_imax30})',        n_events_german_60),
+    (f'Re 60min\n(Optimised thr_imax30 = {thr_opt_60:.4f})', achieved_count_60),
 ]
 
-# Create the figure
-fig, ax = plt.subplots(figsize=(6, 2))  # Adjust the size as needed
-
-# Hide the axes (since we want to show only the table)
+fig, ax = plt.subplots(figsize=(6, 3))
 ax.axis('off')
 
-# Create the table data (without including the column labels in the data)
-table_data = [ [name, length] for name, length in lengths]
-
-# Create the table in the figure
-table = ax.table(cellText=table_data, loc='center', colLabels=['DataFrame', 'Length'], cellLoc='center', colColours=['#f5f5f5', '#f5f5f5'])
-
-# Style the table (optional)
+table_data = [[name, length] for name, length in lengths]
+table = ax.table(cellText=table_data, loc='center', colLabels=['DataFrame', 'Length'],
+                 cellLoc='center', colColours=['#f5f5f5', '#f5f5f5'])
 table.auto_set_font_size(False)
 table.set_fontsize(12)
 table.scale(1.2, 1.2)
 
-# Adjust row height and column width (optional for better appearance)
 for (i, j), cell in table.get_celld().items():
     if i == 0:
-        # Apply bold style to header row
         cell.set_fontsize(14)
         cell.set_text_props(weight='bold')
-    cell.set_height(0.45)  # Increase row height
-    cell.set_width(0.7)    # Increase column width
+    cell.set_height(0.3)
+    cell.set_width(0.7)
 
-# Show the figure
 if save_results:
     fig.savefig('fig/fig00_RE_datasets_lenght.jpeg', format='jpeg', dpi=300, bbox_inches='tight')
 plt.show()
