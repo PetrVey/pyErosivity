@@ -23,12 +23,12 @@ The sequence is done by randomizing order of 10 available years 1000x
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-from src.pyErosivity import remove_incomplete_years
-from src.pyErosivity import get_events 
-from src.pyErosivity import remove_short 
-from src.pyErosivity import get_events_values 
-from src.pyErosivity import get_only_erosivity_events
-from src.pyErosivity import boostrapping_erosivity_CPM_60min
+from pyErosivity import remove_incomplete_years
+from pyErosivity import get_events 
+from pyErosivity import remove_short 
+from pyErosivity import get_events_values 
+from pyErosivity import get_only_erosivity_events
+from pyErosivity import boostrapping_erosivity_CPM_60min
 
 
 # We use VE_0091 station data in resampled hourly resolution as an example

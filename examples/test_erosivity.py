@@ -1,10 +1,13 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 Benchmarks pyErosivity against RIST and compares 5-min vs 60-min erosivity.
 
-Uses ONLY the single intensity criterion (use_both_thresholds=False):
+The RIST was run only with the strict
+single-threshold (IMax30 = 12.7 mm/h), 
+not the full dual-criterion RUSLE.
+
+So, This script uses ONLY the single intensity criterion (use_both_thresholds=False):
     IMax30 >= intensity_threshold [mm/h]
-consistent with RIST default (12.7 mm/h) and Fischer et al. (2018, HESS).
 
 WARNING — SINGLE THRESHOLD VS FULL RUSLE
 -----------------------------------------
@@ -17,21 +20,19 @@ Criterion (ii) is a depth criterion, not a sustained intensity.  Converting it
 to IMax15 >= 25.4 mm/h assumes 6.35 mm falls uniformly over the full 15 min,
 which is rarely the case in practice.
 
-Panagos et al. restated (ii) as peak 30-min depth >= 12.7 mm — identical to
-criterion (i) and therefore logically redundant.  The correct adaptation to
-30-min data is to keep the 6.35 mm depth but widen the window to 30 min
-(EURADCLIM approach), not to double the depth threshold.
+Williams & Sheridan (1991) were among the first to show that coarser measurement
+intervals systematically underestimate EI30; for 60-min data they set I30 equal
+to the maximum hourly depth (I30 = I60) as a pragmatic resolution adaptation.
+Fischer et al. (2018) extended this line of work by lowering the IMax30 threshold
+for coarser resolutions, assuming the 6.35 mm peak concentrates within a
+sub-window while the rest of the hour is nearly dry. The optimisation in this
+script follows the same logic: find the IMax30 threshold that reproduces the
+5-min event count, implicitly correcting for resolution-induced under-detection.
 
-Fischer et al. (2018) lowered the IMax30 threshold for coarser resolutions,
-assuming the 6.35 mm peak concentrates within a sub-window while the rest of
-the hour is nearly dry.  The optimisation in this script follows the same logic:
-find the IMax30 threshold that reproduces the 5-min event count, implicitly
-correcting for resolution-induced under-detection.
 
-Results are comparable to RIST only when RIST is run with the strict
-single-threshold (IMax30 = 12.7 mm/h), not the full dual-criterion RUSLE.
 """
 
+import os
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -39,12 +40,18 @@ from sklearn.linear_model import LinearRegression
 from sklearn.metrics import mean_squared_error
 from math import sqrt
 import time
-from src.pyErosivity import remove_incomplete_years
-from src.pyErosivity import get_events 
-from src.pyErosivity import remove_short 
-from src.pyErosivity import get_events_values 
-from src.pyErosivity import get_only_erosivity_events
-from src.pyErosivity import find_optimal_thr_imax30
+from pyErosivity import remove_incomplete_years
+
+# Paths are resolved relative to this script so it runs correctly from any working directory
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_RES  = os.path.join(_HERE, '..', 'res')
+_OUT  = os.path.join(_HERE, '..', 'out')
+_FIG  = os.path.join(_HERE, '..', 'fig')
+from pyErosivity import get_events 
+from pyErosivity import remove_short 
+from pyErosivity import get_events_values 
+from pyErosivity import get_only_erosivity_events
+from pyErosivity import find_optimal_thr_imax30
 
 #%%
 save_results = True
@@ -56,7 +63,7 @@ slice_year_to = "2020"
 
 # READ DATA OF RIST TOOL OUTPUT FOR FURTHER COMPARSION
 # Path to your text file
-file_path = f"res/RIST_{station_num}_Erosive_Events_5minutes.txt"
+file_path = os.path.join(_RES, f"RIST_{station_num}_Erosive_Events_5minutes.txt")
 # Read the file, handling headers and data separately
 with open(file_path, "r") as file:
     lines = file.readlines()
@@ -70,7 +77,7 @@ df_erosivity_5min_RIST = df_erosivity_5min_RIST.set_index("Date")
 df_erosivity_5min_RIST = df_erosivity_5min_RIST.astype({col: 'float64' for col in df_erosivity_5min_RIST.columns[:]})
 df_erosivity_5min_RIST = df_erosivity_5min_RIST[slice_year_from:slice_year_to]
 if save_results:
-    df_erosivity_5min_RIST.to_parquet(f"out/{station_num}_erosivity_RIST_5min.parquet.gzip", compression="gzip")
+    df_erosivity_5min_RIST.to_parquet(os.path.join(_OUT, f"{station_num}_erosivity_RIST_5min.parquet.gzip"), compression="gzip")
 
 #%%
 # == # == # == # == # == # == # == # == # == # == 
@@ -93,7 +100,7 @@ thr_imax30 = 12.7         # standard Wischmeier IMax30 threshold [mm/h]
 # == # == # == # == # == # == # == # == # == # == 
 
 # Load the data from CSV
-data = pd.read_parquet(f"res/{station_num}_5min_newflag.parguqet.gzip")
+data = pd.read_parquet(os.path.join(_RES, f"{station_num}_5min_newflag.parguqet.gzip"))
 data['time'] = pd.to_datetime(data['time'])
 data = data.set_index('time')
 data = data.loc[slice_year_from:slice_year_to]
@@ -153,7 +160,7 @@ df_erosivity_5 = get_only_erosivity_events(df_erosivity_all_events,
                                          intensity_threshold=thr_imax30)
 # == # == # == # SAVE RESULTS # == # == == # == # 
 if save_results:
-    df_erosivity_5.to_parquet(f"out/{station_num}_erosivity_5min.parquet.gzip", compression="gzip")
+    df_erosivity_5.to_parquet(os.path.join(_OUT, f"{station_num}_erosivity_5min.parquet.gzip"), compression="gzip")
 
 # End timer
 end_time = time.time()
@@ -183,7 +190,7 @@ temporal_scale_factor = 1.9 # temporal scaling factor for 60-min erosivity (Fisc
 # == # == # == # == # == # == # == # == # == # == 
 
 # Load the data from CSV
-data = pd.read_parquet(f"res/{station_num}_1h_flag.parguqet.gzip")
+data = pd.read_parquet(os.path.join(_RES, f"{station_num}_1h_flag.parguqet.gzip"))
 data['time'] = pd.to_datetime(data['time'])
 data = data.set_index('time')
 data = data.loc[slice_year_from:slice_year_to]
@@ -250,7 +257,7 @@ n_events_german_60 = len(df_erosivity_60)  # store before optimizer overwrites
 df_erosivity_60["erosivity_US_adj"] = df_erosivity_60["erosivity_US"] * temporal_scale_factor
 # == # == # == # SAVE RESULTS # == # == == # == # 
 if save_results:
-    df_erosivity_60.to_parquet(f"out/{station_num}_erosivity_60min.parquet.gzip", compression="gzip")
+    df_erosivity_60.to_parquet(os.path.join(_OUT, f"{station_num}_erosivity_60min.parquet.gzip"), compression="gzip")
 
 # End timer
 end_time = time.time()
@@ -281,13 +288,12 @@ df_erosivity_60 = get_only_erosivity_events(df_erosivity_all_events_60,
                                             intensity_threshold=thr_opt_60)
 df_erosivity_60["erosivity_US_adj"] = df_erosivity_60["erosivity_US"] * temporal_scale_factor
 if save_results:
-    df_erosivity_60.to_parquet(f"out/{station_num}_erosivity_60min.parquet.gzip", compression="gzip")
+    df_erosivity_60.to_parquet(os.path.join(_OUT, f"{station_num}_erosivity_60min.parquet.gzip"), compression="gzip")
 
 #%%
 # == # == # == # == # == # == # == # == # == # ==
 # == # == # COMPARSION # == # COMPARISON # == # ==
 # == # == # PLOTS # == # PLOTS # == # ==# ==# ==
-
 df_erosivity_5min_RIST['date'] = df_erosivity_5min_RIST.index.date
 df_erosivity_5['date'] = df_erosivity_5['event_start'].dt.date
 df_erosivity_60['date'] = df_erosivity_60['event_start'].dt.date
@@ -311,7 +317,7 @@ if save_results:
     df_comparison = pd.merge(df_cmp_RIST_5,
                              df_erosivity_60[['date', 'erosivity_US_60', 'erosivity_US_adj_60']],
                              on='date', how='inner')
-    df_comparison.to_parquet(f"out/{station_num}_erosivity_comparison.parquet.gzip", compression="gzip")
+    df_comparison.to_parquet(os.path.join(_OUT, f"{station_num}_erosivity_comparison.parquet.gzip"), compression="gzip")
 
 # == # == # == # Plots # == # == == # == #
 x = 'erosivity_US_5'
@@ -374,7 +380,7 @@ fig.legend([scatter_plot] + [elem[0] for elem in legend_elements],
            bbox_to_anchor=(0.7, 0.3))
 fig.suptitle(f"{station_num} Erosivity Re in [MJ*mm/ha*hr] for events", fontsize=14, fontweight='bold', y=0.93)
 if save_results:
-    fig.savefig('fig/fig00_Re_comparison.jpeg', format='jpeg', dpi=300)
+    fig.savefig(os.path.join(_FIG, 'fig00_Re_comparison.jpeg'), format='jpeg', dpi=300)
 plt.show()
 
 
@@ -404,5 +410,8 @@ for (i, j), cell in table.get_celld().items():
     cell.set_width(0.7)
 
 if save_results:
-    fig.savefig('fig/fig00_RE_datasets_lenght.jpeg', format='jpeg', dpi=300, bbox_inches='tight')
+    fig.savefig(os.path.join(_FIG, 'fig00_RE_datasets_lenght.jpeg'), format='jpeg', dpi=300, bbox_inches='tight')
+
 plt.show()
+
+print("here")

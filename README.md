@@ -18,7 +18,7 @@ Rainfall erosivity quantifies the capacity of rain to detach and transport soil,
    - `get_only_erosivity_events` -- Wischmeier (1959, 1979) / Wischmeier & Smith (1978), also DIN 19708:2017-08: IMax30 >= 12.7 mm/h **or** total depth >= 12.7 mm
    - `get_only_erosivity_events_Renard` -- Renard et al. (1997) RUSLE: total depth >= 12.7 mm **or** max 15-min depth >= 6.35 mm (requires <= 15-min data)
 
-5. **Temporal resolution correction** -- for coarser data (e.g. 60-min), IMax30 is underestimated. `find_optimal_thr_imax30` finds the intensity threshold that minimises the difference in event count relative to a high-resolution reference, following the reasoning in Fischer et al. (2018).
+5. **Temporal resolution correction** -- for coarser data (e.g. 60-min), IMax30 is underestimated. Williams & Sheridan (1991) first addressed this by equating I30 to the maximum hourly depth for 60-min records. `find_optimal_thr_imax30` generalises this idea by finding the intensity threshold that minimises the difference in event count relative to a high-resolution reference, following Fischer et al. (2018).
 
 6. **Bootstrap uncertainty** -- `boostrapping_erosivity_60min` and `boostrapping_erosivity_CPM_60min` estimate uncertainty in annual erosivity by block-bootstrapping over calendar years.
 
