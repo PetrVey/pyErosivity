@@ -446,7 +446,10 @@ def get_events_values(data, dates, arr_dates_oe, durations=[], time_resolution=N
     arr_dates_oe : np.ndarray, shape (N, 2)
         Event (end, start) pairs as returned by remove_short.
     durations : list of int
-        Accumulation window lengths [minutes], e.g. [30] for IMax30 or [15, 30] for both.
+        Accumulation window lengths [minutes]. Must be [30] or [60].
+        Use [30] for IMax30 (standard, any resolution <= 30 min).
+        Use [60] for IMax60 = IMax30 at 60-min resolution
+        (Williams & Sheridan 1991). Any other value raises ValueError.
     time_resolution : int or float
         Data time step [minutes].
 
@@ -466,7 +469,16 @@ def get_events_values(data, dates, arr_dates_oe, durations=[], time_resolution=N
             erosivity_US       : same in US units [MJ mm ha-1 h-1]  (= erosivity_EU x 10)
     """
     if time_resolution is None or not durations:
-        raise ValueError("time_resolution and durations must both be provided.")
+        raise ValueError(
+            "time_resolution and durations must both be provided."
+        )
+    _allowed = {30, 60}
+    _invalid = set(durations) - _allowed
+    if _invalid:
+        raise ValueError(
+            f"Invalid durations: {sorted(_invalid)}. "
+            f"Only [30] or [60] are supported. "
+        )
 
     dict_events = {}
     time_index = dates.reshape(-1)
@@ -641,24 +653,29 @@ def get_only_erosivity_events(df, accum_threshold=12.7, intensity_threshold=12.7
     return filtered_df
 
 
-def find_optimal_thr_imax30(df_all_events, target_count, use_both_thresholds=False):
+def find_optimal_thr_imax30(
+    df_all_events, target_mean_annual, use_both_thresholds=False
+):
     """
-    Find the intensity threshold that minimises |len(erosivity_events) - target_count|.
+    Find the intensity threshold that minimises the difference between the
+    mean annual erosive event count and target_mean_annual.
 
-    Because the filtered event count is a monotonically non-increasing step
-    function of the threshold, the global minimum is found by evaluating the
-    objective at every unique intensity_per_hour value (O(n log n)).
+    The mean annual count is computed by grouping events by calendar year and
+    averaging over all years present in df_all_events (years with zero events
+    are included via reindex so the denominator is always the full record
+    length). The objective is a step function of the threshold, so the global
+    minimum is found by evaluating it at every unique intensity_per_hour value
+    (O(n log n)).
 
-    Typical use: match the number of 60-min erosivity events to the number of
-    5-min erosivity events by tuning thr_imax30.
+    Typical use: match the mean annual count of 60-min erosivity events to
+    the mean annual count of 5-min erosivity events by tuning thr_imax30.
 
     Parameters
     ----------
     df_all_events : pd.DataFrame
-        Full event DataFrame before intensity filtering
-        (e.g. df_erosivity_all_events_60).
-    target_count : int
-        Desired number of erosivity events (e.g. len(df_erosivity_5)).
+        Full event DataFrame before intensity filtering.
+    target_mean_annual : float
+        Desired mean annual number of erosivity events.
     use_both_thresholds : bool
         Passed through to get_only_erosivity_events.
 
@@ -666,24 +683,76 @@ def find_optimal_thr_imax30(df_all_events, target_count, use_both_thresholds=Fal
     -------
     thr_opt : float
         Optimal threshold [mm/h].
-    achieved_count : int
-        Number of events at thr_opt.
-    min_diff : int
-        Residual |achieved_count - target_count| (0 = exact match).
+    achieved_mean_annual : float
+        Mean annual event count at thr_opt.
+    min_diff : float
+        Residual |achieved_mean_annual - target_mean_annual|.
     """
-    # count(thr) is a step function that only changes when thr crosses an actual
-    # data value, so testing every real number is pointless — unique values are enough
+    all_years = sorted(
+        df_all_events['event_start'].dt.year.unique()
+    )
+
+    def _mean_annual(df_filtered):
+        return (
+            df_filtered
+            .groupby(df_filtered['event_start'].dt.year)
+            .size()
+            .reindex(all_years, fill_value=0)
+            .mean()
+        )
+
     unique_thr = np.sort(df_all_events['intensity_per_hour'].unique())
-    counts = np.array([
-        len(get_only_erosivity_events(df_all_events,
-                                      intensity_threshold=float(t),
-                                      use_both_thresholds=use_both_thresholds))
+    mean_annuals = np.array([
+        _mean_annual(
+            get_only_erosivity_events(
+                df_all_events,
+                intensity_threshold=float(t),
+                use_both_thresholds=use_both_thresholds,
+            )
+        )
         for t in unique_thr
     ])
-    diffs = np.abs(counts - target_count)
+    diffs = np.abs(mean_annuals - target_mean_annual)
     # among ties pick the lowest threshold (keeps more events)
     idx_opt = int(np.where(diffs == diffs.min())[0][0])
-    return float(unique_thr[idx_opt]), int(counts[idx_opt]), int(diffs[idx_opt])
+    return (
+        float(unique_thr[idx_opt]),
+        float(mean_annuals[idx_opt]),
+        float(diffs[idx_opt]),
+    )
+
+
+def mean_annual_erosivity(df, erosivity_col='erosivity_US'):
+    """
+    Compute mean annual erosivity (R-factor) from per-event erosivity.
+
+    Annual erosivity is the sum of per-event EI30 within each calendar
+    year. The R-factor is the mean of those annual sums over all years
+    present in the dataset (Wischmeier & Smith 1978).
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Output of get_only_erosivity_events. Must contain an
+        'event_start' datetime column and an erosivity column.
+    erosivity_col : str, optional
+        Name of the per-event erosivity column. Default 'erosivity_US'.
+
+    Returns
+    -------
+    r_factor : float
+        Mean annual erosivity [MJ mm ha-1 h-1 yr-1].
+    annual : pd.Series
+        Annual erosivity sums indexed by year.
+    """
+    all_years = sorted(df['event_start'].dt.year.unique())
+    annual = (
+        df.groupby(df['event_start'].dt.year)[erosivity_col]
+        .sum()
+        .reindex(all_years, fill_value=0)
+    )
+    r_factor = annual.mean()
+    return r_factor, annual
 
 
 def get_only_erosivity_events_Renard(df, accum_threshold=12.7, depth_threshold=6.35, time_resolution=None):

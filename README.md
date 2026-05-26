@@ -52,7 +52,8 @@ pip install -e .
 Example scripts are in the `examples/` folder and must be run from the repo root:
 
 ```bash
-python examples/test_erosivity.py
+python examples/01_example_RISTvsPyErosivity_only_Imax30.py
+python examples/02_example_depth_vs_imax.py
 python examples/test_bootstrapping.py
 python examples/test_bootstrapping_CPM.py
 ```
