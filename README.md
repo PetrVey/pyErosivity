@@ -46,3 +46,13 @@ From the root of the repository:
 ```bash
 pip install -e .
 ```
+
+### 3. Run the examples
+
+Example scripts are in the `examples/` folder and must be run from the repo root:
+
+```bash
+python examples/test_erosivity.py
+python examples/test_bootstrapping.py
+python examples/test_bootstrapping_CPM.py
+```
