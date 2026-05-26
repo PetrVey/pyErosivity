@@ -179,41 +179,74 @@ def get_events(data, dates, separation, min_rain, name_col='value', check_gaps=T
     return consecutive_values
 
 
-def split_event_by_6h_threshold_dates(event_dates, dates, data, window_steps, date_to_idx, thresh=1.27):
+def split_event_by_6h_threshold_dates(
+    event_dates, dates, data, window_steps, date_to_idx, thresh=1.27
+):
     """
-    Split a storm into sub-events based on the Renard et al. (1997) RUSLE 6-hour rule.
+    Split a storm into sub-events based on the Renard et al. (1997) RUSLE
+    6-hour rule.
 
-    Per RUSLE (Renard 1997): if accumulated rainfall in any 6-hour period within a storm
-    is less than 1.27 mm (0.05 in), that period is treated as a dry break and the storm
-    is split into two separate erosive events at that point.
+    Per RUSLE (Renard 1997): if accumulated rainfall in any 6-hour period
+    within a storm is less than 1.27 mm (0.05 in), that period is treated
+    as a dry break and the storm is split at that point.
+
+    IMPLEMENTATION NOTE — inherent ambiguity
+    ----------------------------------------
+    The RUSLE criterion was defined for manual paper-based analysis and
+    does not prescribe a specific algorithmic sliding-window direction.
+    This implementation uses a bidirectional approach: for each time step
+    the maximum of the trailing 6-hour sum and the forward 6-hour sum is
+    taken. A step is flagged as dry only if BOTH directions see < 1.27 mm,
+    meaning the step is genuinely isolated from heavy rain in the past AND
+    in the future.
+
+    Known drawbacks and trade-offs:
+    - A purely trailing window clips event warm-up phases (early drizzle
+      steps see no past rain and get falsely flagged dry).
+    - A purely forward window clips event cool-down phases symmetrically.
+    - A centred convolution (np.convolve mode="same") avoids both clipping
+      problems but bleeds rainfall from one event into the boundary of the
+      next event on the full-series rolling sum, corrupting split decisions
+      near event edges.
+    - The bidirectional max avoids cross-event contamination and warm-up/
+      cool-down clipping, but requires a dry gap to be genuinely dry from
+      both temporal directions before triggering a split. This means very
+      short, isolated dry cores inside a storm may not be detected if
+      heavy rain falls within 6 hours on either side.
+    - RIST's exact algorithm is not publicly documented; agreement with
+      RIST output cannot be guaranteed regardless of the approach chosen.
 
     Parameters
     ----------
     event_dates : np.ndarray of np.datetime64
         Timestamps of the preliminary storm (all wet steps).
     dates : np.ndarray of np.datetime64
-        Full dataset timestamps (used to compute the rolling sum over the whole series).
+        Full dataset timestamps aligned with data.
     data : np.ndarray
         Full precipitation array aligned with dates.
     window_steps : int
-        Number of time steps in a 6-hour window (= 6h / time_resolution).
+        Number of time steps in a 6-hour window (= 6 h / time_resolution).
     date_to_idx : dict
-        Mapping from np.datetime64 timestamp to integer index in dates/data.
+        Mapping from np.datetime64 timestamp to integer index in
+        dates/data.
     thresh : float, optional
-        Minimum 6-hour accumulation [mm] to keep a period as wet. Default 1.27 mm.
+        Minimum 6-hour accumulation [mm] to keep a step as wet.
+        Default 1.27 mm (0.05 in, Renard et al. 1997).
 
     Returns
     -------
     splits : list of np.ndarray
-        Sub-event arrays of np.datetime64; each array is one continuous erosive period.
+        Sub-event arrays of np.datetime64; each array is one continuous
+        erosive period.
     """
-
     # Map dates → indices
     event_idx = np.array([date_to_idx[d] for d in event_dates])
 
-    # Rolling sum on the **full data**, then select event indices
-    full_roll = np.convolve(data, np.ones(window_steps), mode="same")
-    roll = full_roll[event_idx]  # only values corresponding to this event
+    s = pd.Series(data)
+    trail = s.rolling(window=window_steps, min_periods=1).sum()
+    fwd = s[::-1].rolling(window=window_steps, min_periods=1).sum()[::-1]
+    full_roll = np.maximum(trail.to_numpy(), fwd.to_numpy())
+    roll = full_roll[event_idx]
 
     wet = roll > thresh
 
