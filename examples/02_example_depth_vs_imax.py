@@ -25,7 +25,7 @@ from pyErosivity import remove_short
 from pyErosivity import get_events_values
 from pyErosivity import get_only_erosivity_events
 from pyErosivity import find_optimal_thr_imax30
-from pyErosivity import mean_annual_erosivity
+from pyErosivity import get_mean_annual_stats
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _RES = os.path.join(_HERE, '..', 'res')
@@ -138,7 +138,7 @@ for res in RESOLUTIONS:
     )
 
     mask_i = df_erosive['intensity_per_hour'] >= thr_imax30
-    mask_d = df_erosive['prec_accum'] >= accum_threshold
+    mask_d = df_erosive['event_depth'] >= accum_threshold
 
     results[label] = {
         'df_all':      df_all,
@@ -148,7 +148,7 @@ for res in RESOLUTIONS:
         'depth_only':  df_erosive[~mask_i & mask_d],
         'none':        df_all[
             ~(df_all['intensity_per_hour'] >= thr_imax30)
-            & ~(df_all['prec_accum'] >= accum_threshold)
+            & ~(df_all['event_depth'] >= accum_threshold)
         ],
     }
 
@@ -166,7 +166,9 @@ for res in RESOLUTIONS:
     m2   = mean_annual(results[label]['depth_only'])
     mtot = m0 + m1 + m12 + m2
 
-    r_factor, _ = mean_annual_erosivity(df_erosive)
+    r_factor = get_mean_annual_stats(
+        df_erosive, all_years=all_years,
+    )['erosivity']['mean']
 
     m_erosive = m1 + m12 + m2
     table_rows.append({
@@ -211,7 +213,7 @@ df_erosive_opt = get_only_erosivity_events(
 )
 
 mask_i_opt = df_erosive_opt['intensity_per_hour'] >= thr_opt
-mask_d_opt = df_erosive_opt['prec_accum'] >= accum_threshold
+mask_d_opt = df_erosive_opt['event_depth'] >= accum_threshold
 
 results['60 min (opt)'] = {
     'df_all':     df_all_60,
@@ -221,7 +223,7 @@ results['60 min (opt)'] = {
     'depth_only': df_erosive_opt[~mask_i_opt & mask_d_opt],
     'none':       df_all_60[
         ~(df_all_60['intensity_per_hour'] >= thr_opt)
-        & ~(df_all_60['prec_accum'] >= accum_threshold)
+        & ~(df_all_60['event_depth'] >= accum_threshold)
     ],
     'thr_imax30': thr_opt,
 }
@@ -230,7 +232,9 @@ m0_o  = mean_annual(results['60 min (opt)']['none'])
 m1_o  = mean_annual(results['60 min (opt)']['imax_only'])
 m12_o = mean_annual(results['60 min (opt)']['both'])
 m2_o  = mean_annual(results['60 min (opt)']['depth_only'])
-r_factor_opt, _ = mean_annual_erosivity(df_erosive_opt)
+r_factor_opt = get_mean_annual_stats(
+    df_erosive_opt, all_years=all_years,
+)['erosivity']['mean']
 
 table_rows.append({
     'Resolution':  '60 min (opt)',
@@ -276,24 +280,24 @@ for ax, (label, r) in zip(axs.flat, results.items()):
     n2  = len(r['depth_only'])
 
     ax.scatter(
-        r['none']['prec_accum'],
+        r['none']['event_depth'],
         r['none']['intensity_per_hour'],
         color=COLORS['none'], s=12, label='Non-erosive', zorder=1,
     )
     ax.scatter(
-        r['imax_only']['prec_accum'],
+        r['imax_only']['event_depth'],
         r['imax_only']['intensity_per_hour'],
         color=COLORS['imax_only'], s=15,
         label=f'IMax30 only ({n1})', zorder=2,
     )
     ax.scatter(
-        r['both']['prec_accum'],
+        r['both']['event_depth'],
         r['both']['intensity_per_hour'],
         color=COLORS['both'], s=15, marker='s',
         label=f'Both ({n12})', zorder=3,
     )
     ax.scatter(
-        r['depth_only']['prec_accum'],
+        r['depth_only']['event_depth'],
         r['depth_only']['intensity_per_hour'],
         color=COLORS['depth_only'], s=18, marker='^',
         label=f'Depth only ({n2})', zorder=4,
@@ -309,7 +313,7 @@ for ax, (label, r) in zip(axs.flat, results.items()):
     )
     ax.set_xlim(0, 50)
     ax.set_ylim(0, 50)
-    ax.set_xlabel('Total event depth, prec_accum [mm]')
+    ax.set_xlabel('Total event depth, event_depth [mm]')
     ax.set_ylabel('IMax30 [mm/h]')
     ax.set_title(label)
     ax.legend(fontsize=8)

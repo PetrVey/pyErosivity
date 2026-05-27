@@ -10,10 +10,25 @@ Configure RIST as:
     Field mapping  : Month=1, Day=2, Year=3, Hour=4, Minute=5,
                      Second=6, Gauge=7
     Input units    : Metric (mm)
-    Values type    : Depth (not cumulative tips)
+    Values type    : Precipitation during interval
     Header rows    : 1
+    Scan interval  : 5 minutes
+
+RIST screenshots with saved settings are in fig/:
+    RIST_setup_station.jpg         — station / gauge configuration
+    RIST_setup_Rfactor_Imax30.jpg  — R-factor settings using IMax30
+    RIST_setup_Rfactor_Imax15.jpg  — R-factor settings using IMax15
+
+IMax30 vs IMax15 threshold derivation:
+    The marginal erosive event concentrates 6.35 mm (0.25 in) in a
+    short window. Observed at different accumulation window sizes:
+        IMax15 = 6.35 * 60/15 = 25.4 mm/h
+        IMax30 = 6.35 * 60/30 = 12.7 mm/h
 
 Flagged records (flag > 0) are zeroed before export.
+
+NOTE: running this script produces res/VE_0091_5min_RIST_input.csv
+(~70 MB). That file is excluded from git to keep the repository small.
 """
 
 import os

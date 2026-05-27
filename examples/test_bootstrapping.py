@@ -123,7 +123,7 @@ df_erosivity_60['event_peak'] = pd.to_datetime(df_erosivity_60['event_peak'])
 yearly_stats = df_erosivity_60.groupby(df_erosivity_60['event_peak'].dt.year).agg(
     N_events=('event_peak', 'count'),
     mean_intensity_per_hour=('intensity_per_hour', 'mean'),
-    mean_prec_accum=('prec_accum', 'mean'),
+    mean_event_depth=('event_depth', 'mean'),
     sum_erosivity_US_adj=('erosivity_US_adj', 'sum')
 ).reset_index()
 
@@ -138,7 +138,7 @@ yearly_stats = yearly_stats.rename(columns={'event_peak': 'year'})
 # 4. Average annual rainfall erosivity.
 
 # Mean across years
-overall_means = yearly_stats[['N_events', 'mean_intensity_per_hour', 'mean_prec_accum', 'sum_erosivity_US_adj']].mean()
+overall_means = yearly_stats[['N_events', 'mean_intensity_per_hour', 'mean_event_depth', 'sum_erosivity_US_adj']].mean()
 
 # Rename for clarity (optional)
 overall_means.index = [
