@@ -64,7 +64,7 @@ arr_dates = get_events(
 )
 
 _, arr_dates, _ = remove_short(
-    arr_dates, time_resolution=time_resolution, min_ev_dur=min_ev_dur
+    arr_dates, time_resolution=time_resolution, min_ev_dur=min_ev_dur,
 )
 
 df_events = get_events_values(
@@ -72,7 +72,7 @@ df_events = get_events_values(
     arr_dates_oe=arr_dates, time_resolution=time_resolution,
 )
 
-df_events = compute_erosivity(df_events, imax_col='imax_60')
+df_events = compute_erosivity(df_events)
 
 df_erosivity = get_only_erosivity_events(
     df_events,

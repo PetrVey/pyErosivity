@@ -18,7 +18,7 @@ Expected call order
    → df  columns: event_start, event_end, event_depth, E_kin,
                   event_duration, imax_5/10/15/30/60 (resolution-dependent)
 
-4. compute_erosivity(df, imax_col='imax_30')
+4. compute_erosivity(df)
    → df + columns: erosivity_EU [kJ m⁻² mm h⁻¹], erosivity_US [MJ mm ha⁻¹ h⁻¹]
 
 5. get_only_erosivity_events(df, imax_col, intensity_threshold, accum_threshold)
@@ -469,28 +469,26 @@ def get_events_values(
     return df
 
 
-def compute_erosivity(df, imax_col='imax_30'):
+def compute_erosivity(df):
     """
     Compute EI30 erosivity for each event.
 
-    Multiplies the pre-computed kinetic energy (E_kin, stored in df by
-    get_events_values) by the chosen peak intensity column.  The choice
-    of imax column determines which accumulation window drives criterion
-    (ii) and the EI30 product — pick the finest window your data
-    resolution supports (typically imax_30 for <= 30-min data).
+    EI30 = E_kin × IMax30 always.  The intensity column is auto-detected
+    from the DataFrame: imax_30 is used when present (all resolutions
+    <= 30 min); imax_60 is used as fallback for hourly data where imax_30
+    cannot be computed.  Both columns are produced by get_events_values.
 
     Parameters
     ----------
     df : pd.DataFrame
-        Output of get_events_values.  Must contain E_kin and imax_col.
-    imax_col : str, optional
-        Column to use as peak intensity for EI30.  Default 'imax_30'.
+        Output of get_events_values.  Must contain E_kin and at least one
+        of imax_30 or imax_60.
 
     Returns
     -------
     df : pd.DataFrame
         Copy of input with two new columns:
-            erosivity_EU : E_kin × IMax  [kJ m⁻² mm h⁻¹]
+            erosivity_EU : E_kin × IMax30  [kJ m⁻² mm h⁻¹]
             erosivity_US : same in US units [MJ mm ha⁻¹ h⁻¹]
                            (= erosivity_EU × 10)
     """
@@ -499,11 +497,15 @@ def compute_erosivity(df, imax_col='imax_30'):
             "erosivity_US already exists — compute_erosivity was called "
             "twice. Call it once on the output of get_events_values."
         )
-    if imax_col not in df.columns:
+    if 'imax_30' in df.columns:
+        imax_col = 'imax_30'
+    elif 'imax_60' in df.columns:
+        imax_col = 'imax_60'
+    else:
+        available = [c for c in df.columns if c.startswith('imax_')]
         raise ValueError(
-            f"'{imax_col}' not found in DataFrame. "
-            f"Available imax columns: "
-            f"{[c for c in df.columns if c.startswith('imax_')]}"
+            f"Neither imax_30 nor imax_60 found. "
+            f"Available imax columns: {available}"
         )
     df = df.copy()
     df['erosivity_EU'] = df['E_kin'] * df[imax_col]
@@ -827,7 +829,7 @@ def apply_rusle_split(
         time_resolution=time_resolution,
         formula=formula,
     )
-    df_split = compute_erosivity(df_split, imax_col=imax_col)
+    df_split = compute_erosivity(df_split)
     df_split = get_only_erosivity_events(
         df_split,
         imax_col=imax_col,

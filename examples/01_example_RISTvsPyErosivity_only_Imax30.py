@@ -81,7 +81,7 @@ _OUT = os.path.join(_HERE, '..', 'out')
 _FIG = os.path.join(_HERE, '..', 'fig')
 
 #%%
-save_results = False
+save_results = True
 station_num = "VE_0091"
 slice_year_from = "1990"
 slice_year_to = "2020"
@@ -180,7 +180,7 @@ df_events = get_events_values(
     arr_dates_oe=arr_dates,
     time_resolution=time_resolution,
 )
-df_events = compute_erosivity(df_events, imax_col=imax_col)
+df_events = compute_erosivity(df_events)
 df_erosivity_5 = get_only_erosivity_events(
     df_events,
     imax_col=imax_col,
@@ -388,7 +388,7 @@ fig.tight_layout()
 
 if save_results:
     fig.savefig(
-        os.path.join(_FIG, 'fig02_EI30_scatter.jpeg'),
+        os.path.join(_FIG, '01_fig1.jpg'),
         format='jpeg', dpi=300,
     )
 plt.show()
