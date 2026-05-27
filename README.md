@@ -86,3 +86,155 @@ python examples/02_example_depth_vs_imax.py
 python examples/test_bootstrapping.py
 python examples/test_bootstrapping_CPM.py
 ```
+
+---
+
+## Example studies
+
+### Study 1 — Validation against RIST 3.99
+
+**Script:** `examples/01_example_RISTvsPyErosivity_only_Imax30.py`
+
+The first study validates pyErosivity against RIST 3.99 (Rainfall Intensity Summarization Tool), the official USDA software used to compute erosivity for the official US R-factor maps. RIST is the de-facto reference implementation of RUSLE, so matching it is the natural baseline before exploring any extensions.
+
+**Data:** Station VE_0091, 5-min resolution, 1990–2020 (31 years).
+
+**RIST configuration** — Station and data format:
+
+![RIST station setup](fig/RIST_setup_station.jpg)
+
+The station is configured with a 5-min scan interval, 0.2 mm gauge tip, metric input, and the DIN 19708 energy formula (`e = 0.119 + 0.0873 log i`). pyErosivity uses the identical formula and the same 6-hour / 1.27 mm storm-break rule.
+
+**RIST erosivity options for IMax30 ≥ 12.7 mm/h (standard RUSLE):**
+
+![RIST R-factor setup IMax30](fig/RIST_setup_Rfactor_Imax30.jpg)
+
+Events are omitted when *both* `depth < 12.70 mm` AND `IMax30 < 12.7 mm/h` — i.e., an event is kept if *either* threshold is exceeded (the standard RUSLE dual criterion).
+
+**RIST erosivity options for IMax15 ≥ 25.4 mm/h (alternative criterion):**
+
+![RIST R-factor setup IMax15](fig/RIST_setup_Rfactor_Imax15.jpg)
+
+The same dual criterion but with the 15-min accumulation window at 25.4 mm/h (2 × 12.7). This is mathematically derived from the same 6.35 mm (0.25 in) benchmark depth — see the discussion in Study 2 below.
+
+**Results:**
+
+![Validation scatter, R-factor and event statistics](fig/01_fig1.jpg)
+
+```
+Events — IMax30: RIST 962 | pyEr 966
+Events — IMax15: RIST 927 | pyEr 931
+
+Mean annual statistics (1990–2020):
+                              RIST 30  pyEr 30  RIST 15  pyEr 15
+N events / yr                    31.0     31.2     29.9     30.0
+Mean event depth [mm]            31.4     31.5     32.3     32.3
+Mean event Imax [mm/h]           10.4     10.3     14.0     13.9
+R-factor [MJ mm/ha/h/yr]      2027.8   2019.7   1993.0   1985.6
+```
+
+pyErosivity produces 4 more events than RIST for both criteria. The gap is fully explained by RIST's internal inch rounding: a depth of 12.8 mm converts to 0.504 in, which RIST rounds to 0.50 in = 12.70 mm — exactly at the exclusion threshold, so RIST drops it while pyErosivity keeps it. The four borderline events identified are:
+
+| Criterion | Year | Date | Depth |
+|---|---|---|---|
+| IMax30 only | 2004 | 2004-05-21 | 8.8 mm |
+| IMax30 only | 2014 | 2014-11-17 | 12.8 mm |
+| IMax30 only | 2016 | 2016-10-02 | 12.8 mm |
+| IMax30 only | 2017 | 2017-09-18 | 12.8 mm |
+| IMax15 add. | 2017 | 2017-06-15 | 11.4 mm |
+
+R-factor agreement is within **0.4 %** for both criteria. This study uses the validated 5-min dataset as the reference for all subsequent resolution experiments.
+
+---
+
+### Study 2 — Effect of temporal resolution on erosivity
+
+**Script:** `examples/02_example_depth_vs_imax.py`
+
+Study 1 demonstrated that pyErosivity matches RIST at 5-min resolution. But long-term rainfall records are often available only at coarser resolution (15, 30, or 60 min). When the time step grows, the sliding-window intensity estimate degrades — and the question becomes: how much does the erosivity estimate change, and can anything be done about it?
+
+#### The core problem: one depth, three different intensities
+
+The figure below shows what happens to the same 6.35 mm rain burst when measured with different accumulation windows:
+
+![Rainfall intensity accumulation windows](fig/rainfall_intensity_windows.png)
+
+The benchmark depth of 6.35 mm (= 0.25 in, the original RUSLE threshold) gives:
+
+| Window | IMax | Threshold |
+|---|---|---|
+| 15 min | **25.4 mm/h** | IMax15 ≥ 25.4 mm/h |
+| 30 min | **12.7 mm/h** | IMax30 ≥ 12.7 mm/h |
+| 60 min | **6.35 mm/h** | IMax60 ≥ 6.35 mm/h |
+
+All three thresholds are derived from the same physical quantity — 6.35 mm in the accumulation window. At fine resolution, IMax30 ≥ 12.7 is the standard. At coarser resolution, the 30-min window may straddle two fixed time bins, so the measured peak intensity drops even if the actual rainfall was identical.
+
+#### A second problem: temporal aggregation changes event counts
+
+Beyond intensity underestimation, coarsening the time step also affects how storms are *detected*:
+
+![Effect of binning resolution on event detection](fig/rainfal_bining_resolution.jpeg)
+
+The hand sketch illustrates two scenarios. In the top case a single intense spike visible at 10-min resolution appears as a flat, sub-threshold bar at 60-min aggregation — producing **0 events** instead of 1. In the bottom case two distinct storms separated by a dry spell at 10-min resolution merge into a single continuous 60-min block — producing **1 event** instead of 2. Temporal aggregation can therefore both lose and create spurious events relative to the fine-resolution truth.
+
+#### Three criteria compared across four resolutions
+
+To quantify these effects, three selection criteria are run on data resampled to 5, 15, 30, and 60 min:
+
+| Label | IMax column | Threshold | Rationale |
+|---|---|---|---|
+| **IMax30 ≥ 12.7** | `imax_30` | 12.7 mm/h | Standard RUSLE, validated in Study 1 |
+| **IMax15 ≥ 25.4** | `imax_15` (5/15 min) or `imax_30` / `imax_60` (≥30 min) | 25.4 mm/h | Mathematically equivalent threshold for finer window |
+| **IMax30 ≥ 25.4** | `imax_30` | 25.4 mm/h | Same stricter depth applied to the standard window |
+
+EI30 is always computed as `E_kin × IMax30` regardless of which column drives the selection — the selection criterion and the energy calculation are independent.
+
+For the 60-min case an **optimised threshold** is also computed: `find_optimal_thr_imax30` finds the IMax60 cut-off that reproduces the 5-min event count (31.2 ev/yr), yielding **6.8 mm/h**.
+
+#### Overview: event classification across all resolutions and criteria
+
+![Combined scatter — all resolutions × all criteria](fig/02_fig4.jpg)
+
+Each panel plots event depth (x) vs peak intensity (y). Colours mark event classification: IMax-only (intensity criterion alone), both (dual criterion), and depth-only (depth criterion alone). The IMax15 column (green border) uses the alternative 25.4 mm/h threshold on the finer window. The dashed horizontal line marks the active intensity threshold; the dashed vertical line marks the 12.7 mm depth threshold.
+
+#### Event counts and R-factor by resolution
+
+**IMax30 ≥ 12.7 mm/h** (standard, left column above):
+
+![Bar chart — IMax30](fig/02_fig1.jpg)
+
+**IMax15 ≥ 25.4 mm/h** (middle column):
+
+![Bar chart — IMax15](fig/02_fig2.jpg)
+
+**IMax30 ≥ 25.4 mm/h** (right column):
+
+![Bar chart — IMax30 old](fig/02_fig3.jpg)
+
+Summary table — mean annual statistics:
+
+```
+              Total ev/yr  Erosive ev/yr  IMax only  Both   Depth only  R-factor [MJ mm ha⁻¹ h⁻¹ yr⁻¹]
+5 min               137.7           31.2        2.1   7.1        22.0                            2019.7
+15 min              138.5           31.1        2.0   6.6        22.5                            1860.2
+30 min              139.8           30.6        1.5   5.9        23.1                            1682.1
+60 min              143.1           29.0        0.0   2.2        26.8                            1152.9
+60 min (opt)        143.1           31.2        2.2  11.3        17.7                            1188.4
+
+IMax15 criterion:
+5 min               137.7           29.8        1.0   3.8        25.1
+15 min              138.5           29.8        0.6   3.1        26.1
+30 min              139.8           29.0        0.0   0.9        28.1
+60 min              143.1           29.0        0.0   0.0        29.0
+```
+
+Key observations:
+- At 60-min resolution the standard IMax30 criterion loses all IMax-only events (IMax60 never exceeds 12.7 mm/h for this station) and **R-factor drops by 43 %** relative to 5-min.
+- The optimised threshold recovers the correct event count but the R-factor gain is modest (+3 %) because the IMax60 used in EI30 is itself underestimated.
+- IMax15 at 25.4 mm/h selects fewer events than IMax30 at 12.7 mm/h at fine resolution — confirming the two thresholds are mathematically related but not identical in practice (IMax30 allows the same depth to arrive over 30 min, which is a looser criterion).
+
+#### Focused comparison: 5-min reference vs 60-min vs 60-min (optimised)
+
+![Focused scatter — 5 min / 60 min / 60 min (opt)](fig/02_fig5.jpg)
+
+The focused figure isolates the three most policy-relevant cases. At 5-min resolution the scatter is sharp; at 60-min events cluster near the axes and the IMax-only zone empties; the optimised threshold partially repopulates the IMax-only zone by lowering the cut-off to 6.8 mm/h but cannot recover the R-factor because the intensity values themselves are aggregation-diluted.
