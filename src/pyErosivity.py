@@ -3,6 +3,32 @@
 Created on Fri Nov 29 10:25:32 2024
 
 @author: Petr
+
+pyErosivity — rainfall erosivity (R-factor / EI30) from precipitation time series.
+
+Expected call order
+-------------------
+1. remove_incomplete_years(df, name_col)
+   → df (cleaned), time_resolution [min]
+
+2. get_events(data_arr, dates_arr, separation, min_rain)
+   → arr_dates  shape (N, 2)  dtype datetime64  columns: [start, end]
+
+3. get_events_values(data_arr, dates_arr, arr_dates, time_resolution)
+   → df  columns: event_start, event_end, event_depth, E_kin,
+                  event_duration, imax_5/10/15/30/60 (resolution-dependent)
+
+4. compute_erosivity(df, imax_col='imax_30')
+   → df + columns: erosivity_EU [kJ m⁻² mm h⁻¹], erosivity_US [MJ mm ha⁻¹ h⁻¹]
+
+5. get_only_erosivity_events(df, imax_col, intensity_threshold, accum_threshold)
+   → df  filtered to erosive events only
+
+6. apply_rusle_split(df_erosivity, data_arr, dates_arr, time_resolution)  [optional]
+   → df  after Renard 1.27 mm / 6 h sub-storm splitting and re-filtering
+
+Zero values below the drizzle threshold (e.g. data[data < min_rain] = 0) BEFORE
+calling get_events and pass the same zeroed array to apply_rusle_split.
 """
 import pandas as pd
 import numpy as np
@@ -30,28 +56,39 @@ def remove_incomplete_years(data_pr, name_col = 'value', nan_to_zero=True, toler
     time_resolution : float
         Detected time step of the dataset [minutes].
     """
-    # Step 1: get resolution of dataset (MUST BE SAME in whole dataset!!!)
-    time_res = (data_pr.index[-1] - data_pr.index[-2]).total_seconds()/60
-    # Step 2: Resample by year and count total and NaN values
+    # Step 1: get resolution from mode of all time diffs (robust to gaps at
+    # the start or end of the record)
+    time_res = pd.Series(
+        data_pr.index[1:] - data_pr.index[:-1]
+    ).mode()[0].total_seconds() / 60
+    # Step 2: Resample by year and count non-NaN values per year
     if parse(pd.__version__) > parse("2.2"):
-        yearly_valid = data_pr.resample('YE').apply(lambda x: x.notna().sum())  # Count not NaNs per year
-    else: 
-        yearly_valid = data_pr.resample('Y').apply(lambda x: x.notna().sum())  # Count not NaNs per year
-    # Step 3: Estimate expected lenght of yearly timeseries
-    expected = pd.DataFrame(index = yearly_valid.index)
-    expected["Total"] = 1440/time_res*365
-    # Step 4: Calculate percentage of missing data per year by aligning the dimensions
-    valid_percentage = (yearly_valid[name_col] / expected['Total'])       
-    # Step 3: Filter out years where more than 10% of the values are NaN
-    years_to_remove = valid_percentage[valid_percentage < 1-tolerance].index
-    # Step 4: Remove data for those years from the original DataFrame
-    data_cleanded = data_pr[~data_pr.index.year.isin(years_to_remove.year)]
-    # Replace NaN values with 0 in the specific column
+        yearly_valid = data_pr.resample('YE').apply(
+            lambda x: x.notna().sum()
+        )
+    else:
+        yearly_valid = data_pr.resample('Y').apply(
+            lambda x: x.notna().sum()
+        )
+    # Step 3: Estimate expected length of yearly timeseries
+    expected = pd.DataFrame(index=yearly_valid.index)
+    expected["Total"] = 1440 / time_res * 365
+    # Step 4: Calculate fraction of valid data per year
+    valid_percentage = (yearly_valid[name_col] / expected['Total'])
+    # Step 5: Identify years below the tolerance threshold
+    years_to_remove = valid_percentage[
+        valid_percentage < 1 - tolerance
+    ].index
+    # Step 6: Remove those years and optionally fill remaining NaNs
+    data_cleaned = data_pr[
+        ~data_pr.index.year.isin(years_to_remove.year)
+    ]
     if nan_to_zero:
-        data_cleanded.loc[:, name_col] =  data_cleanded[name_col].fillna(0)
-        
+        data_cleaned.loc[:, name_col] = (
+            data_cleaned[name_col].fillna(0)
+        )
     time_resolution = time_res
-    return data_cleanded, time_resolution
+    return data_cleaned, time_resolution
 
 
 def get_events(
@@ -71,7 +108,9 @@ def get_events(
     data : pd.DataFrame or np.ndarray
         Precipitation values.
     dates : np.ndarray
-        Timestamps corresponding to data (used when data is np.ndarray).
+        Timestamps corresponding to data. When data is a pd.DataFrame,
+        dates is derived from the index automatically and this argument
+        is ignored.
     separation : int or float
         Minimum dry gap [hours] required to split two events.
     min_rain : float
@@ -83,6 +122,8 @@ def get_events(
     check_gaps : bool, optional
         If True, remove events whose start/end falls within `separation`
         hours of a data gap or the dataset boundary. Default True.
+        Dropped events produce no warning — set check_gaps=False if you
+        need to audit boundary losses yourself.
     time_resolution : int or float, optional
         Data time step [minutes]. Required when min_ev_dur is provided.
     min_ev_dur : int or float, optional
@@ -94,47 +135,40 @@ def get_events(
     Returns
     -------
     arr_dates : np.ndarray, shape (N, 2)
-        Array of (end, start) timestamp pairs for each retained event,
+        Array of (start, end) timestamp pairs for each retained event,
         ready to pass directly to get_events_values.
     """
-    if isinstance(data,pd.DataFrame):
-        # Find values above threshold
-        above_threshold = data[data[name_col] > min_rain]
-        # Find consecutive values above threshold separated by more than 24 observations
-        consecutive_values = []
-        temp = []
-        for index, row in above_threshold.iterrows():
-            if not temp:
-                temp.append(index)
-            else:
-                if index - temp[-1] > pd.Timedelta(hours=separation):
-                    if len(temp) >= 1:
-                        consecutive_values.append(temp)
-                    temp = []
-                temp.append(index)
-        if len(temp) >= 1:
-            consecutive_values.append(temp)
-            
-    elif isinstance(data,np.ndarray):
-        dates = dates.astype("datetime64[ns]")
+    if isinstance(data, pd.DataFrame):
+        dates = np.array(data.index)
+        data = np.array(data[name_col])
+    elif not isinstance(data, np.ndarray):
+        raise TypeError(
+            f"data must be pd.DataFrame or np.ndarray, "
+            f"got {type(data).__name__}."
+        )
 
-        if min_rain == 0:
-            above_threshold_indices = np.where(data > min_rain)[0]
-        else:
-            above_threshold_indices = np.where(data >= min_rain)[0]
+    dates = dates.astype("datetime64[ns]")
 
-        if len(above_threshold_indices) == 0:
-            return []
+    if min_rain == 0:
+        above_threshold_indices = np.where(data > min_rain)[0]
+    else:
+        above_threshold_indices = np.where(data >= min_rain)[0]
 
-        # Vectorized event grouping: find gaps between consecutive wet steps,
-        # then split at those gaps — O(n) vs the old O(n) Python loop but ~10x faster
-        above_dates = dates[above_threshold_indices]
-        time_diffs_above = np.diff(above_dates).astype(np.int64)
-        separation_ns = int(separation * 3.6e12)
-        split_points = np.where(time_diffs_above >= separation_ns)[0] + 1
-        index_groups = np.split(above_threshold_indices, split_points)
-        consecutive_values = [dates[group] for group in index_groups]
-    
+    if len(above_threshold_indices) == 0:
+        return np.empty((0, 2), dtype='datetime64[ns]')
+
+    # Vectorized event grouping: find gaps between consecutive wet steps,
+    # then split at those gaps
+    above_dates = dates[above_threshold_indices]
+    time_diffs_above = np.diff(above_dates).astype(np.int64)
+    separation_ns = int(separation * 3.6e12)
+    split_points = np.where(time_diffs_above >= separation_ns)[0] + 1
+    index_groups = np.split(above_threshold_indices, split_points)
+    consecutive_values = [dates[group] for group in index_groups]
+
+    if not consecutive_values:
+        return np.empty((0, 2), dtype='datetime64[ns]')
+
     if check_gaps == True:
         #remove event that starts before dataset starts in regard of separation time
         if (consecutive_values[0][0] - dates[0]).item() < (separation * 3.6e+12): #this numpy dt, so still in nanoseconds
@@ -201,7 +235,7 @@ def get_events(
         return arr_dates
 
     # No duration filter — convert list to arr_dates directly
-    arr_dates = np.array([(ev[-1], ev[0]) for ev in consecutive_values])
+    arr_dates = np.array([(ev[0], ev[-1]) for ev in consecutive_values])
     return arr_dates
 
 
@@ -226,12 +260,17 @@ def remove_short(list_events:list, time_resolution=None, min_ev_dur=None):
     arr_vals : np.ndarray
         Boolean array (all True) for events that passed the filter.
     arr_dates : np.ndarray, shape (N, 2)
-        Array of (end, start) timestamp pairs for each retained event.
+        Array of (start, end) timestamp pairs for each retained event.
     n_events_per_year : pd.DataFrame
         Count of retained events per calendar year.
     """
     if time_resolution is None or min_ev_dur is None:
         raise ValueError("time_resolution and min_ev_dur must both be provided.")
+
+    if len(list_events) == 0:
+        empty = np.empty((0, 2), dtype='datetime64[ns]')
+        empty_df = pd.DataFrame(columns=['year', 'index'])
+        return np.array([], dtype=bool), empty, empty_df
 
     # Normalise to np.datetime64 so there is one unified code path
     if isinstance(list_events[0][0], pd.Timestamp):
@@ -249,7 +288,7 @@ def remove_short(list_events:list, time_resolution=None, min_ev_dur=None):
     ]
 
     ll_dates = [
-        (ev[-1], ev[0]) if keep else (np.nan, np.nan)
+        (ev[0], ev[-1]) if keep else (np.nan, np.nan)
         for ev, keep in zip(list_events, ll_short)
     ]
 
@@ -280,7 +319,7 @@ def get_events_values(
     data yields imax_10, imax_30, imax_60; 60-min data yields imax_60
     only.
 
-    Erosivity (EI30) is NOT computed here.  Use get_erosivity() on the
+    Erosivity (EI30) is NOT computed here.  Use compute_erosivity() on the
     returned DataFrame, passing the imax column appropriate for your data.
 
     All kinetic energy formulas are normalized internally to
@@ -294,7 +333,9 @@ def get_events_values(
     dates : np.ndarray of np.datetime64
         Timestamps aligned with data.
     arr_dates_oe : np.ndarray, shape (N, 2)
-        Event (end, start) pairs as returned by remove_short.
+        Event (start, end) pairs as returned by get_events or remove_short.
+        The _oe suffix stands for Observed Events (OE), the term used in
+        European erosivity literature for individual storm records.
     time_resolution : int or float
         Data time step [minutes].  Required.
     formula : str, optional
@@ -318,7 +359,7 @@ def get_events_values(
             E_kin          : event kinetic energy [kJ m⁻²], integrated
                            per time step using E_kin_i_Rogler() or the
                            chosen formula; passed to
-                           get_erosivity() to compute EI30
+                           compute_erosivity() to compute EI30
             imax_5       : peak 5-min intensity [mm/h]   — if resolution <= 5 min
             imax_10      : peak 10-min intensity [mm/h]  — if resolution <= 10 min
                            and 10 % resolution == 0
@@ -327,7 +368,8 @@ def get_events_values(
             imax_30      : peak 30-min intensity [mm/h]  — criterion (ii) standard
             imax_60      : peak 60-min intensity [mm/h]
         Columns for windows not supported by the resolution are absent.
-        EI30 (erosivity_US) is not included — call get_erosivity() next.
+        event_duration is always present regardless of resolution.
+        EI30 (erosivity_US) is not included — call compute_erosivity() next.
     """
     if time_resolution is None:
         raise ValueError("time_resolution must be provided.")
@@ -346,8 +388,8 @@ def get_events_values(
     time_index = dates.reshape(-1)
     n_events = arr_dates_oe.shape[0]
 
-    oe_end = arr_dates_oe[:, 0].astype("datetime64[ns]")
-    oe_start = arr_dates_oe[:, 1].astype("datetime64[ns]")
+    oe_start = arr_dates_oe[:, 0].astype("datetime64[ns]")
+    oe_end = arr_dates_oe[:, 1].astype("datetime64[ns]")
     start_indices = np.searchsorted(time_index, oe_start)
     end_indices = np.searchsorted(time_index, oe_end)
 
@@ -427,7 +469,7 @@ def get_events_values(
     return df
 
 
-def get_erosivity(df, imax_col='imax_30'):
+def compute_erosivity(df, imax_col='imax_30'):
     """
     Compute EI30 erosivity for each event.
 
@@ -452,6 +494,11 @@ def get_erosivity(df, imax_col='imax_30'):
             erosivity_US : same in US units [MJ mm ha⁻¹ h⁻¹]
                            (= erosivity_EU × 10)
     """
+    if 'erosivity_US' in df.columns:
+        raise ValueError(
+            "erosivity_US already exists — compute_erosivity was called "
+            "twice. Call it once on the output of get_events_values."
+        )
     if imax_col not in df.columns:
         raise ValueError(
             f"'{imax_col}' not found in DataFrame. "
@@ -591,7 +638,9 @@ def get_only_erosivity_events(
     Parameters
     ----------
     df : pd.DataFrame
-        Output of get_events_values.
+        Output of get_events_values or compute_erosivity. Only
+        event_depth and imax_col are required — compute_erosivity
+        does not need to be called before this function.
     accum_threshold : float, optional
         Minimum total event depth [mm] — criterion (i). Default 12.7.
     intensity_threshold : float, optional
@@ -607,6 +656,10 @@ def get_only_erosivity_events(
     Returns
     -------
     filtered_df : pd.DataFrame
+        Subset of the input retaining only erosive events.  Same columns
+        as the input (event_start, event_end, event_depth, E_kin,
+        imax_*, and erosivity_* if compute_erosivity was called).
+        Index is reset to 0-based integers.
     """
     if imax_col not in df.columns:
         raise ValueError(
@@ -682,6 +735,13 @@ def apply_rusle_split(
     of which 4 extras vs RIST are fully explained by inch rounding at the
     12.8 mm / 12.8 mm/h threshold.
 
+    Preconditions
+    -------------
+    ``data`` must already have sub-drizzle values zeroed (the same array
+    you passed to get_events).  If raw data is passed instead, drizzle
+    steps will be treated as wet and split points will be missed, silently
+    producing too few sub-storms.
+
     Parameters
     ----------
     df_erosivity : pd.DataFrame
@@ -689,7 +749,7 @@ def apply_rusle_split(
         split.  Must contain 'event_start' and 'event_end' columns.
     data : np.ndarray
         Full precipitation time series [mm per time step], aligned with
-        dates.  Values below the drizzle threshold must already be zeroed.
+        dates.  Must be the same zeroed array passed to get_events.
     dates : np.ndarray of np.datetime64
         Timestamps aligned with data.
     time_resolution : float
@@ -755,7 +815,7 @@ def apply_rusle_split(
 
         for se in splits:
             if len(se) > 0:
-                sub_event_pairs.append((se[-1], se[0]))
+                sub_event_pairs.append((se[0], se[-1]))
 
     if not sub_event_pairs:
         return df_erosivity.copy()
@@ -767,7 +827,7 @@ def apply_rusle_split(
         time_resolution=time_resolution,
         formula=formula,
     )
-    df_split = get_erosivity(df_split, imax_col=imax_col)
+    df_split = compute_erosivity(df_split, imax_col=imax_col)
     df_split = get_only_erosivity_events(
         df_split,
         imax_col=imax_col,
@@ -820,6 +880,12 @@ def get_mean_annual_stats(
             'mean'   – mean across years
             'std'    – standard deviation across years
             'annual' – pd.Series indexed by year
+
+        Aggregation note: n_events and erosivity are summed per year
+        first, then averaged across years (sum-then-mean).  depth and
+        intensity are averaged per year first (mean event value per
+        year), then averaged across years (mean-of-means) — so they
+        represent the typical event, not the annual total.
     """
     years = df[year_col].dt.year
 
@@ -862,7 +928,8 @@ def get_mean_annual_stats(
 
 
 def find_optimal_thr_imax30(
-    df_all_events, target_mean_annual, use_both_thresholds=False
+    df_all_events, target_mean_annual,
+    imax_col='imax_30', use_both_thresholds=False,
 ):
     """
     Find the intensity threshold that minimises the difference between the
@@ -872,8 +939,7 @@ def find_optimal_thr_imax30(
     averaging over all years present in df_all_events (years with zero events
     are included via reindex so the denominator is always the full record
     length). The objective is a step function of the threshold, so the global
-    minimum is found by evaluating it at every unique intensity_per_hour value
-    (O(n log n)).
+    minimum is found by evaluating it at every unique imax_col value (O(n log n)).
 
     Typical use: match the mean annual count of 60-min erosivity events to
     the mean annual count of 5-min erosivity events by tuning thr_imax30.
@@ -881,9 +947,11 @@ def find_optimal_thr_imax30(
     Parameters
     ----------
     df_all_events : pd.DataFrame
-        Full event DataFrame before intensity filtering.
+        Output of get_events_values, before intensity filtering.
     target_mean_annual : float
         Desired mean annual number of erosivity events.
+    imax_col : str, optional
+        Intensity column to sweep over. Default 'imax_30'.
     use_both_thresholds : bool
         Passed through to get_only_erosivity_events.
 
@@ -896,6 +964,12 @@ def find_optimal_thr_imax30(
     min_diff : float
         Residual |achieved_mean_annual - target_mean_annual|.
     """
+    if imax_col not in df_all_events.columns:
+        raise ValueError(
+            f"'{imax_col}' not found. "
+            f"Available: "
+            f"{[c for c in df_all_events.columns if c.startswith('imax_')]}"
+        )
     all_years = sorted(
         df_all_events['event_start'].dt.year.unique()
     )
@@ -909,11 +983,12 @@ def find_optimal_thr_imax30(
             .mean()
         )
 
-    unique_thr = np.sort(df_all_events['intensity_per_hour'].unique())
+    unique_thr = np.sort(df_all_events[imax_col].unique())
     mean_annuals = np.array([
         _mean_annual(
             get_only_erosivity_events(
                 df_all_events,
+                imax_col=imax_col,
                 intensity_threshold=float(t),
                 use_both_thresholds=use_both_thresholds,
             )
@@ -930,57 +1005,32 @@ def find_optimal_thr_imax30(
     )
 
 
-def get_only_erosivity_events_Renard(df, accum_threshold=12.7, depth_threshold=6.35, time_resolution=None):
+def bootstrapping_erosivity_60min(
+    df_erosivity, niter=1000, M=None,
+    imax_col='imax_30', erosivity_col='erosivity_US',
+):
     """
-    Filter erosivity events using the Renard et al. (1997) RUSLE criteria.
-
-    An event is erosive if either:
-        (i)  total accumulated event depth >= accum_threshold  [mm]  (default 12.7 mm)
-        (ii) maximum 15-min accumulated depth >= depth_threshold [mm] (default 6.35 mm = 0.25 in)
-
-    Criterion (ii) requires data at <= 15-min resolution so that window_depth
-    reflects a true 15-min window. If time_resolution > 15, this function raises
-    a ValueError — use get_only_erosivity_events for coarser data.
-
-    Parameters
-    ----------
-    df : pd.DataFrame
-        Output of get_events_values with durations=[15].
-    accum_threshold : float, optional
-        Minimum total event depth [mm]. Default 12.7.
-    depth_threshold : float, optional
-        Minimum 15-min accumulated depth [mm]. Default 6.35 (Renard 1997).
-    time_resolution : int or float, optional
-        Data time step in minutes. Must be <= 15 to apply criterion (ii).
-
-    Returns
-    -------
-    filtered_df : pd.DataFrame
-    """
-    if time_resolution is not None and time_resolution > 15:
-        raise ValueError(
-            f"time_resolution={time_resolution} min is too coarse for the Renard 6.35 mm/15-min "
-            f"criterion. Use get_only_erosivity_events for data coarser than 15 min."
-        )
-    filtered_df = df[(df['window_depth'] >= depth_threshold) | (df['event_depth'] >= accum_threshold)]
-    return filtered_df.reset_index(drop=True)
-
-def boostrapping_erosivity_60min(df_erosivity, niter=1000, M=None):
-    """
-    Bootstrap annual erosivity statistics from a 60-min erosivity DataFrame.
+    Bootstrap annual erosivity statistics from an erosivity event DataFrame.
 
     Resamples calendar years with replacement to estimate uncertainty in
-    mean annual erosivity, event count, and mean intensity.
+    mean annual erosivity, event count, intensity, and depth.
 
     Parameters
     ----------
     df_erosivity : pd.DataFrame
-        Output of get_only_erosivity_events with erosivity_US_adj column added.
+        Output of compute_erosivity + get_only_erosivity_events. Must contain
+        event_start (datetime), event_depth, imax_col, and erosivity_col.
     niter : int, optional
         Number of bootstrap iterations. Default 1000.
     M : int, optional
-        Number of years per bootstrap sample. Defaults to the number of unique
-        years in the dataset.
+        Number of years per bootstrap sample. Defaults to the number of
+        unique years in the dataset.
+    imax_col : str, optional
+        Column with peak intensity [mm/h]. Default 'imax_30'.
+    erosivity_col : str, optional
+        Column with per-event erosivity [MJ mm ha⁻¹ h⁻¹].
+        Default 'erosivity_US'. Pass a custom column name if you applied
+        a temporal scale factor (e.g. 'erosivity_US_adj').
 
     Returns
     -------
@@ -988,72 +1038,74 @@ def boostrapping_erosivity_60min(df_erosivity, niter=1000, M=None):
         One row per bootstrap sample with columns: mean_annual_events,
         mean_annual_Imax, mean_rain_depth, average_annual_erosivity.
     """
-    # Ensure 'event_peak' is datetime
-    df_erosivity['event_peak'] = pd.to_datetime(df_erosivity['event_peak'])
+    df = df_erosivity.copy()
+    years = df['event_start'].dt.year
 
-    # extract years out of population
-    blocks = np.unique(df_erosivity['event_peak'].dt.year)
-    # M 
-    if M == None:
+    blocks = np.unique(years)
+    if M is None:
         M = len(blocks)
-    else:
-        pass
-    
-    # Create bootstrap samples as random combination of years
+
     randy = np.random.choice(blocks, size=(niter, M), replace=True)
-    
-    # Precompute yearly aggregates once
-    yearly_agg = df_erosivity.groupby('year').agg(
-        N_events=('event_peak', 'count'),
-        mean_intensity_per_hour=('intensity_per_hour', 'mean'),
+
+    yearly_agg = df.assign(_year=years).groupby('_year').agg(
+        N_events=('event_depth', 'count'),
+        mean_intensity_per_hour=(imax_col, 'mean'),
         mean_event_depth=('event_depth', 'mean'),
-        sum_erosivity_US_adj=('erosivity_US_adj', 'sum')
-    ).reset_index()
-    
-    # Then bootstrap sample years from yearly_agg, sum/mean accordingly
+        sum_erosivity=(erosivity_col, 'sum'),
+    ).reset_index().rename(columns={'_year': 'year'})
+
     bootstrap_summaries = []
-    
     for i, sampled_years in enumerate(randy, 1):
         sample_df = yearly_agg[yearly_agg['year'].isin(sampled_years)]
-    
-        overall_means = sample_df[['N_events', 'mean_intensity_per_hour', 'mean_event_depth', 'sum_erosivity_US_adj']].mean()
-    
-        overall_means.index = [
-            'mean_annual_events',
-            'mean_annual_Imax',
-            'mean_rain_depth',
-            'average_annual_erosivity'
+        means = sample_df[[
+            'N_events', 'mean_intensity_per_hour',
+            'mean_event_depth', 'sum_erosivity',
+        ]].mean()
+        means.index = [
+            'mean_annual_events', 'mean_annual_Imax',
+            'mean_rain_depth', 'average_annual_erosivity',
         ]
-    
-        overall_means['sample'] = f'sample_{i}'
-        bootstrap_summaries.append(overall_means)
-    
-    df_bootstrap_summary = pd.DataFrame(bootstrap_summaries).set_index('sample')
-    
-    return df_bootstrap_summary
+        means['sample'] = f'sample_{i}'
+        bootstrap_summaries.append(means)
 
-    
-def boostrapping_erosivity_CPM_60min(df_erosivity, niter=1000, M=None, randy=None):
+    return pd.DataFrame(bootstrap_summaries).set_index('sample')
+
+
+def bootstrapping_erosivity_CPM_60min(
+    df_erosivity, niter=1000, M=None, randy=None,
+    imax_col='imax_30', erosivity_col='erosivity_US',
+):
     """
-    Bootstrap annual erosivity statistics, with optional external sample index (CPM use case).
+    Bootstrap annual erosivity statistics with optional pre-defined sample
+    index (CPM / multi-dataset use case).
 
-    Same as boostrapping_erosivity_60min but accepts a pre-defined `randy` array so that
-    bootstrap samples can be shared across multiple datasets (e.g. climate model ensembles).
+    Same as bootstrapping_erosivity_60min but accepts a pre-defined `randy`
+    array so that bootstrap samples can be shared across multiple datasets
+    (e.g. climate model ensembles where the same year-draw order is required
+    for a fair comparison).
 
     Parameters
     ----------
     df_erosivity : pd.DataFrame
-        Output of get_only_erosivity_events with erosivity_US_adj column added.
+        Output of compute_erosivity + get_only_erosivity_events. Must contain
+        event_start (datetime), event_depth, imax_col, and erosivity_col.
     niter : int, optional
-        Number of bootstrap iterations. Ignored if randy is provided. Default 1000.
+        Number of bootstrap iterations. Ignored if randy is provided.
+        Default 1000.
     M : int, optional
-        Years per bootstrap sample. Ignored if randy is provided. Defaults to
-        the number of unique years in the dataset.
+        Years per bootstrap sample. Ignored if randy is provided. Defaults
+        to the number of unique years in the dataset.
     randy : np.ndarray of int, optional
-        Pre-defined sample index array, shape (niter, M). Values must be either:
-        - 1-based consecutive integers (1..N) for fast index mapping, or
-        - arbitrary integers mapped to the sorted unique years in df_erosivity.
-        If provided, niter and M are ignored.
+        Pre-defined sample index array, shape (niter, M). Values must be
+        either 1-based consecutive integers (1..N) for fast index mapping,
+        or arbitrary integers mapped to the sorted unique years in
+        df_erosivity. If provided, niter and M are ignored.
+    imax_col : str, optional
+        Column with peak intensity [mm/h]. Default 'imax_30'.
+    erosivity_col : str, optional
+        Column with per-event erosivity [MJ mm ha⁻¹ h⁻¹].
+        Default 'erosivity_US'. Pass a custom column name if you applied
+        a temporal scale factor (e.g. 'erosivity_US_adj').
 
     Returns
     -------
@@ -1061,76 +1113,56 @@ def boostrapping_erosivity_CPM_60min(df_erosivity, niter=1000, M=None, randy=Non
         One row per bootstrap sample with columns: mean_annual_events,
         mean_annual_Imax, mean_rain_depth, average_annual_erosivity.
     """
-    # Ensure 'event_peak' is datetime
-    df_erosivity['event_peak'] = pd.to_datetime(df_erosivity['event_peak'])
-    
+    df = df_erosivity.copy()
+    years = df['event_start'].dt.year
+    blocks = np.sort(years.unique())
+
     if randy is None:
-        # extract years out of population
-        blocks = np.unique(df_erosivity['event_peak'].dt.year)
-        # M 
-        if M == None:
+        if M is None:
             M = len(blocks)
-        else:
-            pass
-        
-        # Create bootstrap samples as random combination of years
         randy = np.random.choice(blocks, size=(niter, M), replace=True)
     else:
-        #randy bust be integers 
-        if not randy.dtype == np.int32:
+        if randy.dtype != np.int32:
             randy = randy.astype(np.int32)
-            
-        unique_randy_vals = np.unique(randy)  # e.g., [1, 2, ..., N]
+
+        unique_randy_vals = np.unique(randy)
         n_randy_vals = len(unique_randy_vals)
-        
-        blocks = np.sort(df_erosivity['event_peak'].dt.year.unique())
-        
+
         if len(blocks) != n_randy_vals:
-            raise ValueError(f"Mismatch: randy has {n_randy_vals} unique values, but df_erosivity has {len(blocks)} unique years.")
+            raise ValueError(
+                f"Mismatch: randy has {n_randy_vals} unique values "
+                f"but df_erosivity has {len(blocks)} unique years."
+            )
 
-
-        # Check for clean 1-based consecutive values
-        # meaning is that randy should have consectuive values as unique
-        # like 1 to 10, in such case, we will do fast indexing
-        # if randy has years 1 to 5 and then 10 to 15, we will do more robust mapping
-        is_1_based_consecutive = (
-            np.array_equal(unique_randy_vals, np.arange(1, n_randy_vals + 1))
+        # Fast path for clean 1-based consecutive indices (1..N)
+        is_1_based = np.array_equal(
+            unique_randy_vals, np.arange(1, n_randy_vals + 1)
         )
-        
-        if is_1_based_consecutive:
-            # Use fast indexing
+        if is_1_based:
             randy = blocks[randy - 1]
         else:
-            # Use robust mapping
             mapping = dict(zip(unique_randy_vals, blocks))
             randy = np.vectorize(mapping.get)(randy)
-    
-    # Precompute yearly aggregates once
-    yearly_agg = df_erosivity.groupby('year').agg(
-        N_events=('event_peak', 'count'),
-        mean_intensity_per_hour=('intensity_per_hour', 'mean'),
+
+    yearly_agg = df.assign(_year=years).groupby('_year').agg(
+        N_events=('event_depth', 'count'),
+        mean_intensity_per_hour=(imax_col, 'mean'),
         mean_event_depth=('event_depth', 'mean'),
-        sum_erosivity_US_adj=('erosivity_US_adj', 'sum')
-    ).reset_index()
-    
-    # Then bootstrap sample years from yearly_agg, sum/mean accordingly
+        sum_erosivity=(erosivity_col, 'sum'),
+    ).reset_index().rename(columns={'_year': 'year'})
+
     bootstrap_summaries = []
-    
     for i, sampled_years in enumerate(randy, 1):
         sample_df = yearly_agg[yearly_agg['year'].isin(sampled_years)]
-    
-        overall_means = sample_df[['N_events', 'mean_intensity_per_hour', 'mean_event_depth', 'sum_erosivity_US_adj']].mean()
-    
-        overall_means.index = [
-            'mean_annual_events',
-            'mean_annual_Imax',
-            'mean_rain_depth',
-            'average_annual_erosivity'
+        means = sample_df[[
+            'N_events', 'mean_intensity_per_hour',
+            'mean_event_depth', 'sum_erosivity',
+        ]].mean()
+        means.index = [
+            'mean_annual_events', 'mean_annual_Imax',
+            'mean_rain_depth', 'average_annual_erosivity',
         ]
-    
-        overall_means['sample'] = f'sample_{i}'
-        bootstrap_summaries.append(overall_means)
-    
-    df_bootstrap_summary = pd.DataFrame(bootstrap_summaries).set_index('sample')
-    
-    return df_bootstrap_summary
+        means['sample'] = f'sample_{i}'
+        bootstrap_summaries.append(means)
+
+    return pd.DataFrame(bootstrap_summaries).set_index('sample')

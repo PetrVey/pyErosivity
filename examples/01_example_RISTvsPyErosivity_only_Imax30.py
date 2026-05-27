@@ -41,8 +41,8 @@ They differ in the intensity criterion (ii):
             IMax15 = 6.35 / (15/60) = 25.4 mm/h
             IMax30 = 6.35 / (30/60) = 12.7 mm/h
 
-This script compares pyErosivity against the IMax30 RIST setup
-(use_both_thresholds=True, thr_imax30=12.7 mm/h).
+This script compares pyErosivity against both RIST setups
+(use_both_thresholds=True).
 
 NOTE ON RIST STORM SEPARATION
 ------------------------------
@@ -71,9 +71,8 @@ import matplotlib.pyplot as plt
 from pyErosivity import remove_incomplete_years
 from pyErosivity import get_events
 from pyErosivity import get_events_values
-from pyErosivity import get_erosivity
+from pyErosivity import compute_erosivity
 from pyErosivity import get_only_erosivity_events
-from pyErosivity import apply_rusle_split
 from pyErosivity import get_mean_annual_stats
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -121,6 +120,12 @@ df_rist_imax30 = read_rist_output(os.path.join(
 ))
 df_rist_imax30 = df_rist_imax30[slice_year_from:slice_year_to]
 
+df_rist_imax15 = read_rist_output(os.path.join(
+    _RES,
+    f"RIST_{station_num}_Erosive_Events_5minutes_imax15.txt",
+))
+df_rist_imax15 = df_rist_imax15[slice_year_from:slice_year_to]
+
 #%%
 # == # == # == # == # == # == # == # == # == # ==
 # == # == # SETTING # == # == # SETTING # == # ==
@@ -131,7 +136,9 @@ time_resolution = 5.0    # Dataset time resolution [min]
 name_col = "vals"        # Column with precipitation data
 use_both_thresholds = True   # Depth OR intensity, matching RIST setup
 thr_imax30 = 12.7        # Wischmeier IMax30 threshold [mm/h]
-imax_col = 'imax_30'     # Intensity column for criterion (ii)
+imax_col = 'imax_30'     # Intensity column for IMax30 criterion
+thr_imax15 = 25.4        # Wischmeier IMax15 threshold [mm/h]
+imax_col_15 = 'imax_15'  # Intensity column for IMax15 criterion
 # == # == # SETTING # == # == # SETTING # == # ==
 # == # == # == # == # == # == # == # == # == # ==
 
@@ -173,7 +180,7 @@ df_events = get_events_values(
     arr_dates_oe=arr_dates,
     time_resolution=time_resolution,
 )
-df_events = get_erosivity(df_events, imax_col=imax_col)
+df_events = compute_erosivity(df_events, imax_col=imax_col)
 df_erosivity_5 = get_only_erosivity_events(
     df_events,
     imax_col=imax_col,
@@ -181,25 +188,26 @@ df_erosivity_5 = get_only_erosivity_events(
     use_both_thresholds=use_both_thresholds,
 )
 
-
-
-# Renard RUSLE splitting applied to already-filtered erosivity events
-df_erosivity_renard = apply_rusle_split(
-    df_erosivity=df_erosivity_5,
-    data=df_arr,
-    dates=df_dates,
-    time_resolution=time_resolution,
-    imax_col=imax_col,
-    intensity_threshold=thr_imax30,
+# IMax15 — EI30 is always E*I30 by definition; imax15 is the selection
+# criterion only. df_events already has erosivity_US from imax30.
+df_erosivity_15 = get_only_erosivity_events(
+    df_events,
+    imax_col=imax_col_15,
+    intensity_threshold=thr_imax15,
     use_both_thresholds=use_both_thresholds,
 )
+
+
 
 #%%
 # == # == # == # == # == # == # == # == # == # ==
 # == # == # COMPARISON # == # COMPARISON # == # ==
 # == # == # == # == # == # == # == # == # == # ==
 
-df_rist_imax30['date'] = df_rist_imax30.index.date
+for df_r in (df_rist_imax30, df_rist_imax15):
+    df_r['date'] = df_r.index.date
+df_rist_imax30 = df_rist_imax30.rename(columns={"EI30": "RIST_EI30"})
+df_rist_imax15 = df_rist_imax15.rename(columns={"EI30": "RIST_EI30"})
 
 
 def _event_date(ts_series):
@@ -213,209 +221,173 @@ def _event_date(ts_series):
 
 
 df_erosivity_5['date'] = _event_date(df_erosivity_5['event_start'])
-df_erosivity_renard['date'] = _event_date(
-    df_erosivity_renard['event_start']
-)
-
-df_rist_imax30 = df_rist_imax30.rename(columns={"EI30": "RIST_EI30"})
+df_erosivity_15['date'] = _event_date(df_erosivity_15['event_start'])
 
 
-# Aggregate pyErosivity by date — RIST reports one EI30 per calendar
-# day, summing any same-day events into a single entry.
-df_py_daily = (
-    df_erosivity_5.groupby('date', as_index=False)['erosivity_US']
-    .sum()
-)
-df_cmp = pd.merge(
-    df_rist_imax30[['date', 'RIST_EI30']],
-    df_py_daily,
-    on='date', how='inner',
-)
-
-df_py_renard_daily = (
-    df_erosivity_renard.groupby('date', as_index=False)['erosivity_US']
-    .sum()
-)
-df_cmp_renard = pd.merge(
-    df_rist_imax30[['date', 'RIST_EI30']],
-    df_py_renard_daily,
-    on='date', how='inner',
-)
-
-# Dates in RIST but not matched in pyErosivity 6h, grouped by year
-rist_dates = set(df_rist_imax30['date'])
-py6h_dates = set(df_erosivity_5['date'])
-only_in_rist = sorted(rist_dates - py6h_dates)
-rist_depth_by_date = df_rist_imax30.set_index('date')['PRECIP']
-print("\nDates in RIST but NOT in pyErosivity 6h sep., by year:")
-by_year = {}
-for d in only_in_rist:
-    by_year.setdefault(d.year, []).append(d)
-for yr in sorted(by_year):
-    entries = ', '.join(
-        f"{d} ({rist_depth_by_date.loc[d]:.1f} mm)"
-        for d in by_year[yr]
+def _make_cmp(df_rist, df_py):
+    """Date-matched merge; RIST one row per day, pyEr summed per day."""
+    df_daily = df_py.groupby('date', as_index=False)['erosivity_US'].sum()
+    return pd.merge(
+        df_rist[['date', 'RIST_EI30']], df_daily, on='date', how='inner'
     )
-    print(f"  {yr} ({len(by_year[yr])}): {entries}")
-if not only_in_rist:
-    print("  (none)")
 
-# Dates in pyErosivity 6h but not in RIST, grouped by year
-py6h_depth_by_date = (
-    df_erosivity_5.groupby('date')['event_depth'].sum()
-)
-only_in_py6h = sorted(py6h_dates - rist_dates)
-print("\nDates in pyErosivity 6h sep. but NOT in RIST, by year:")
-by_year_py = {}
-for d in only_in_py6h:
-    by_year_py.setdefault(d.year, []).append(d)
-for yr in sorted(by_year_py):
-    entries = ', '.join(
-        f"{d} ({py6h_depth_by_date.loc[d]:.1f} mm)"
-        for d in by_year_py[yr]
-    )
-    print(f"  {yr} ({len(by_year_py[yr])}): {entries}")
-if not only_in_py6h:
-    print("  (none)")
+
+df_cmp30 = _make_cmp(df_rist_imax30, df_erosivity_5)
+df_cmp15 = _make_cmp(df_rist_imax15, df_erosivity_15)
+
+
+def _print_only_in_py(df_py, df_rist, label):
+    """Print events present in pyErosivity but absent from RIST."""
+    rist_dates = set(df_rist['date'])
+    py_dates = set(df_py['date'])
+    depth_by_date = df_py.groupby('date')['event_depth'].sum()
+    only_py = sorted(py_dates - rist_dates)
+    print(f"\nEvents in pyErosivity ({label}) but NOT in RIST, by year:")
+    by_year = {}
+    for d in only_py:
+        by_year.setdefault(d.year, []).append(d)
+    for yr in sorted(by_year):
+        entries = ', '.join(
+            f"{d} ({depth_by_date.loc[d]:.1f} mm)"
+            for d in by_year[yr]
+        )
+        print(f"  {yr} ({len(by_year[yr])}): {entries}")
+    if not only_py:
+        print("  (none)")
+
+
+_print_only_in_py(df_erosivity_5, df_rist_imax30, 'IMax30')
+_print_only_in_py(df_erosivity_15, df_rist_imax15, 'IMax15')
 print(
-    "  NOTE: events with depth=12.8 mm are likely excluded by RIST due to\n"
-    "  inch rounding: 12.8/25.4=0.504 in → rounds to 0.50 in=12.7 mm,\n"
-    "  exactly at threshold → excluded. Same logic applies to imax30=12.8\n"
-    "  mm/h: max 30-min depth 6.4 mm → 0.252 in → rounds to 0.25 in=\n"
-    "  6.35 mm → imax30=12.7 mm/h exactly → excluded."
+    "  NOTE: RIST operates internally in inches with unknown rounding.\n"
+    "  Borderline events round to exactly the threshold in RIST and are\n"
+    "  excluded (e.g. 12.8 mm → 0.504 in → 0.50 in = 12.7 mm)."
 )
-
-# Dates in RIST but not matched in pyErosivity Renard, grouped by year
-renard_dates = set(df_erosivity_renard['date'])
-only_in_rist_vs_renard = sorted(rist_dates - renard_dates)
-renard_depth_by_date = (
-    df_erosivity_renard.groupby('date')['event_depth'].sum()
-)
-print("\nDates in RIST but NOT in pyErosivity Renard sep., by year:")
-by_year_r = {}
-for d in only_in_rist_vs_renard:
-    by_year_r.setdefault(d.year, []).append(d)
-for yr in sorted(by_year_r):
-    entries = ', '.join(
-        f"{d} ({rist_depth_by_date.loc[d]:.1f} mm)"
-        for d in by_year_r[yr]
-    )
-    print(f"  {yr} ({len(by_year_r[yr])}): {entries}")
-if not only_in_rist_vs_renard:
-    print("  (none)")
-
-# Dates in pyErosivity Renard but not in RIST, grouped by year
-only_in_renard = sorted(renard_dates - rist_dates)
-print("\nDates in pyErosivity Renard sep. but NOT in RIST, by year:")
-by_year_rp = {}
-for d in only_in_renard:
-    by_year_rp.setdefault(d.year, []).append(d)
-for yr in sorted(by_year_rp):
-    entries = ', '.join(
-        f"{d} ({renard_depth_by_date.loc[d]:.1f} mm)"
-        for d in by_year_rp[yr]
-    )
-    print(f"  {yr} ({len(by_year_rp[yr])}): {entries}")
-if not only_in_renard:
-    print("  (none)")
 
 all_years = list(range(int(slice_year_from), int(slice_year_to) + 1))
 
-stats_py = get_mean_annual_stats(
+stats_30 = get_mean_annual_stats(
     df_erosivity_5, year_col='event_start', ei30_col='erosivity_US',
     depth_col='event_depth', intensity_col=imax_col,
     all_years=all_years,
 )
-stats_renard = get_mean_annual_stats(
-    df_erosivity_renard, year_col='event_start', ei30_col='erosivity_US',
-    depth_col='event_depth', intensity_col=imax_col,
+stats_15 = get_mean_annual_stats(
+    df_erosivity_15, year_col='event_start', ei30_col='erosivity_US',
+    depth_col='event_depth', intensity_col=imax_col_15,
     all_years=all_years,
 )
 
 
-def _rist_agg(col, agg):
-    s = df_rist_imax30.groupby(df_rist_imax30.index.year)[col].agg(agg)
+def _rist_agg(df_rist, col, agg):
+    s = df_rist.groupby(df_rist.index.year)[col].agg(agg)
     return s.reindex(all_years, fill_value=0 if agg != 'mean' else None)
 
 
-rist_annual_ei30 = _rist_agg('RIST_EI30', 'sum')
-rist_n_annual = _rist_agg('RIST_EI30', 'count')
-rist_depth_annual = _rist_agg('PRECIP', 'mean')
-rist_imax30_annual = _rist_agg('MAX_30', 'mean').dropna()
+r30_ei30 = _rist_agg(df_rist_imax30, 'RIST_EI30', 'sum')
+r30_n = _rist_agg(df_rist_imax30, 'RIST_EI30', 'count')
+r30_depth = _rist_agg(df_rist_imax30, 'PRECIP', 'mean')
+r30_imax = _rist_agg(df_rist_imax30, 'MAX_30', 'mean').dropna()
+
+r15_ei30 = _rist_agg(df_rist_imax15, 'RIST_EI30', 'sum')
+r15_n = _rist_agg(df_rist_imax15, 'RIST_EI30', 'count')
+r15_depth = _rist_agg(df_rist_imax15, 'PRECIP', 'mean')
+r15_imax = _rist_agg(df_rist_imax15, 'MAX_15', 'mean').dropna()
 
 print(
-    f"Events — RIST IMax30: {len(df_rist_imax30)} | "
-    f"pyErosivity 6h: {len(df_erosivity_5)} | "
-    f"pyErosivity Renard: {len(df_erosivity_renard)}"
+    f"\nEvents — IMax30: RIST {len(df_rist_imax30)} | "
+    f"pyEr {len(df_erosivity_5)}"
+)
+print(
+    f"Events — IMax15: RIST {len(df_rist_imax15)} | "
+    f"pyEr {len(df_erosivity_15)}"
 )
 hdr = (
-    f"{'':30s} {'RIST':>10s} {'pyEr. 6h':>10s} {'pyEr. Renard':>14s}"
+    f"{'':30s} {'RIST 30':>10s} {'pyEr 30':>10s}"
+    f" {'RIST 15':>10s} {'pyEr 15':>10s}"
 )
 print(f"\nMean annual statistics ({slice_year_from}–{slice_year_to}):")
 print(hdr)
 print(
     f"{'N events / yr':30s} "
-    f"{rist_n_annual.mean():>10.1f} "
-    f"{stats_py['n_events']['mean']:>10.1f} "
-    f"{stats_renard['n_events']['mean']:>14.1f}"
+    f"{r30_n.mean():>10.1f} {stats_30['n_events']['mean']:>10.1f}"
+    f" {r15_n.mean():>10.1f} {stats_15['n_events']['mean']:>10.1f}"
 )
 print(
     f"{'Mean event depth [mm]':30s} "
-    f"{rist_depth_annual.mean():>10.1f} "
-    f"{stats_py['depth']['mean']:>10.1f} "
-    f"{stats_renard['depth']['mean']:>14.1f}"
+    f"{r30_depth.mean():>10.1f} {stats_30['depth']['mean']:>10.1f}"
+    f" {r15_depth.mean():>10.1f} {stats_15['depth']['mean']:>10.1f}"
 )
 print(
-    f"{'Mean event IMax30 [mm/h]':30s} "
-    f"{rist_imax30_annual.mean():>10.1f} "
-    f"{stats_py['intensity']['mean']:>10.1f} "
-    f"{stats_renard['intensity']['mean']:>14.1f}"
+    f"{'Mean event Imax [mm/h]':30s} "
+    f"{r30_imax.mean():>10.1f} {stats_30['intensity']['mean']:>10.1f}"
+    f" {r15_imax.mean():>10.1f} {stats_15['intensity']['mean']:>10.1f}"
 )
 print(
     f"{'R-factor [MJ mm/ha/h/yr]':30s} "
-    f"{rist_annual_ei30.mean():>10.1f} "
-    f"{stats_py['erosivity']['mean']:>10.1f} "
-    f"{stats_renard['erosivity']['mean']:>14.1f}"
+    f"{r30_ei30.mean():>10.1f} {stats_30['erosivity']['mean']:>10.1f}"
+    f" {r15_ei30.mean():>10.1f} {stats_15['erosivity']['mean']:>10.1f}"
 )
 
 if save_results:
     df_erosivity_5.to_parquet(
         os.path.join(
-            _OUT, f"{station_num}_erosivity_5min.parquet.gzip"
+            _OUT, f"{station_num}_erosivity_5min_imax30.parquet.gzip"
+        ),
+        compression="gzip",
+    )
+    df_erosivity_15.to_parquet(
+        os.path.join(
+            _OUT, f"{station_num}_erosivity_5min_imax15.parquet.gzip"
         ),
         compression="gzip",
     )
 
-# Scatter: RIST EI30 (x) vs pyErosivity EI30 (y), date-matched
-fig2, axes = plt.subplots(1, 2, figsize=(12, 5))
 
-for ax, df, col, label, color in [
-    (axes[0], df_cmp, 'erosivity_US',
-     f'6h sep. (n={len(df_cmp)})', 'black'),
-    (axes[1], df_cmp_renard, 'erosivity_US',
-     f'Renard sep. (n={len(df_cmp_renard)})', 'tomato'),
-]:
-    x = df['RIST_EI30'].values
-    y = df[col].values
-    ax.scatter(x, y, alpha=0.4, s=18, color=color, label=label)
+def _scatter_panel(ax, df_cmp, title):
+    x = df_cmp['RIST_EI30'].values
+    y = df_cmp['erosivity_US'].values
+    bias = float(np.mean(y - x))
+    ss_res = float(np.sum((y - x) ** 2))
+    ss_tot = float(np.sum((y - np.mean(y)) ** 2))
+    r2 = 1 - ss_res / ss_tot
+    ax.scatter(x, y, alpha=0.4, s=18, color='steelblue',
+               label=f'events (n={len(df_cmp)})')
     lim = max(x.max(), y.max()) * 1.05
     ax.plot([0, lim], [0, lim], 'k--', linewidth=0.8, label='1:1')
     ax.set_xlim(0, lim)
     ax.set_ylim(0, lim)
     ax.set_xlabel('RIST EI30 [MJ mm ha⁻¹ h⁻¹]')
     ax.set_ylabel('pyErosivity EI30 [MJ mm ha⁻¹ h⁻¹]')
+    ax.set_title(title, fontsize=11)
+    ax.text(
+        0.05, 0.95,
+        f"Bias = {bias:+.2f}\n$R^2$ = {r2:.3f}",
+        transform=ax.transAxes, fontsize=9,
+        va='top', ha='left',
+        bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.7),
+    )
     ax.legend(fontsize=9)
     ax.grid(True, alpha=0.3)
     ax.set_aspect('equal')
 
-fig2.suptitle(
-    f"{station_num} — EI30 scatter: pyErosivity vs RIST (date-matched)",
+
+fig, axes = plt.subplots(1, 2, figsize=(12, 6))
+_scatter_panel(
+    axes[0], df_cmp30,
+    f"{station_num} — IMax30 (thr={thr_imax30} mm/h)",
+)
+_scatter_panel(
+    axes[1], df_cmp15,
+    f"{station_num} — IMax15 (thr={thr_imax15} mm/h)",
+)
+fig.suptitle(
+    'EI30: pyErosivity vs RIST (date-matched)',
     fontsize=13, fontweight='bold',
 )
-fig2.tight_layout()
+fig.tight_layout()
 
 if save_results:
-    fig2.savefig(
+    fig.savefig(
         os.path.join(_FIG, 'fig02_EI30_scatter.jpeg'),
         format='jpeg', dpi=300,
     )

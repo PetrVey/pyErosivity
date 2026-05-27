@@ -18,27 +18,29 @@ Rainfall erosivity quantifies the capacity of rain to detach and transport soil,
 
 5. **Temporal resolution correction** -- for coarser data (e.g. 60-min), IMax30 is underestimated. Williams & Sheridan (1991) first addressed this by equating I30 to the maximum hourly depth for 60-min records. `find_optimal_thr_imax30` generalises this idea by finding the intensity threshold that minimises the difference in event count relative to a high-resolution reference, following Fischer et al. (2018).
 
-6. **Bootstrap uncertainty** -- `boostrapping_erosivity_60min` and `boostrapping_erosivity_CPM_60min` estimate uncertainty in annual erosivity by block-bootstrapping over calendar years.
+6. **Bootstrap uncertainty** -- `bootstrapping_erosivity_60min` and `bootstrapping_erosivity_CPM_60min` estimate uncertainty in annual erosivity by block-bootstrapping over calendar years.
 
 ## Output columns
 
-`get_events_values` returns a dict of DataFrames (one per accumulation window).
-Each row is one event; the columns are:
+`get_events_values` returns a single DataFrame. Each row is one event; the columns are:
 
 | Column | Description | RUSLE criterion |
 |---|---|---|
 | `event_start` | Event start timestamp | — |
 | `event_end` | Event end timestamp | — |
-| `event_peak` | Timestamp of peak accumulation window | — |
 | `event_depth` | Total accumulated depth over the whole event [mm] | Criterion (i): `event_depth` >= 12.7 mm |
-| `window_depth` | Maximum accumulated depth over the sliding window (30 or 60 min) [mm] | Used to compute IMax30 → criterion (ii) |
-| `intensity_per_hour` | Peak window intensity [mm/h] = `window_depth` × 60 / window [min] | Criterion (ii): `intensity_per_hour` >= 12.7 mm/h |
+| `event_duration` | Event duration [h] | — |
 | `E_kin` | Kinetic energy of the event [kJ m⁻²] | — |
-| `erosivity_EU` | Event erosivity E_kin × IMax30 [kJ m⁻² mm h⁻¹] | — |
-| `erosivity_US` | Same in US units [MJ mm ha⁻¹ h⁻¹] (= erosivity_EU × 10) | — |
+| `imax_5` | Peak 5-min intensity [mm/h] — if resolution ≤ 5 min | — |
+| `imax_10` | Peak 10-min intensity [mm/h] — if resolution ≤ 10 min | — |
+| `imax_15` | Peak 15-min intensity [mm/h] — if resolution ≤ 15 min | — |
+| `imax_30` | Peak 30-min intensity [mm/h] | Criterion (ii): `imax_30` >= 12.7 mm/h |
+| `imax_60` | Peak 60-min intensity [mm/h] | — |
+| `erosivity_EU` | E_kin × IMax [kJ m⁻² mm h⁻¹] — added by `compute_erosivity` | — |
+| `erosivity_US` | Same in US units [MJ mm ha⁻¹ h⁻¹] (= erosivity_EU × 10) — added by `compute_erosivity` | — |
 
 The RUSLE dual criterion applied by `get_only_erosivity_events` is:
-**`event_depth` >= 12.7 mm OR `intensity_per_hour` >= 12.7 mm/h**
+**`event_depth` >= 12.7 mm OR `imax_30` >= 12.7 mm/h**
 
 ## Key references
 
