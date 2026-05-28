@@ -34,7 +34,9 @@ import pandas as pd
 import numpy as np
 from packaging.version import parse
 
-def remove_incomplete_years(data_pr, name_col = 'value', nan_to_zero=True, tolerance=0.1):
+def remove_incomplete_years(
+    data_pr, name_col='value', nan_to_zero=True, tolerance=0.1
+):
     """
     Remove years with too many missing values from a precipitation time series.
 
@@ -169,56 +171,59 @@ def get_events(
     if not consecutive_values:
         return np.empty((0, 2), dtype='datetime64[ns]')
 
-    if check_gaps == True:
-        #remove event that starts before dataset starts in regard of separation time
-        if (consecutive_values[0][0] - dates[0]).item() < (separation * 3.6e+12): #this numpy dt, so still in nanoseconds
+    if check_gaps:
+        # Remove event too close to dataset start
+        if (
+            (consecutive_values[0][0] - dates[0]).item()
+            < (separation * 3.6e+12)
+        ):
             consecutive_values.pop(0)
-        else:
-            pass
-        
-        #remove event that ends before dataset ends in regard of separation time
-        if (dates[-1] - consecutive_values[-1][-1]).item() < (separation * 3.6e+12): #this numpy dt, so still in nanoseconds
+
+        # Remove event too close to dataset end
+        if (
+            (dates[-1] - consecutive_values[-1][-1]).item()
+            < (separation * 3.6e+12)
+        ):
             consecutive_values.pop()
-        else:
-            pass
-        
-        #Locate OE that ends before gaps in data starts.
-        # Calculate the differences between consecutive elements
+
+        # Locate events that overlap data gaps
         time_diffs = np.diff(dates)
-        #difference of first element is time resolution
+        # Time resolution from first step
         time_res = time_diffs[0]
-        # Identify gaps (where the difference is greater than 1 hour)
-        gap_indices_end = np.where(time_diffs > np.timedelta64(int(separation * 3.6e+12), 'ns'))[0]
-        # extend by another index in gap cause we need to check if there is OE there too
-        gap_indices_start = ( gap_indices_end  + 1)
-       
+        gap_indices_end = np.where(
+            time_diffs > np.timedelta64(
+                int(separation * 3.6e+12), 'ns'
+            )
+        )[0]
+        gap_indices_start = (gap_indices_end + 1)
+
         match_info = []
         for gap_idx in gap_indices_end:
             end_date = dates[gap_idx]
-            start_date = end_date - np.timedelta64(int(separation * 3.6e+12), 'ns')
-            # Creating an array from start_date to end_date in hourly intervals
+            start_date = end_date - np.timedelta64(
+                int(separation * 3.6e+12), 'ns'
+            )
             temp_date_array = np.arange(start_date, end_date, time_res)
-            
-            # Checking for matching indices in consecutive_values
             for i, sub_array in enumerate(consecutive_values):
-                match_indices = np.where(np.isin(sub_array, temp_date_array))[0]
+                match_indices = np.where(
+                    np.isin(sub_array, temp_date_array)
+                )[0]
                 if match_indices.size > 0:
-                    
                     match_info.append(i)
-         
+
         for gap_idx in gap_indices_start:
             start_date = dates[gap_idx]
-            end_date = start_date + np.timedelta64(int(separation * 3.6e+12), 'ns')
-            # Creating an array from start_date to end_date in hourly intervals
+            end_date = start_date + np.timedelta64(
+                int(separation * 3.6e+12), 'ns'
+            )
             temp_date_array = np.arange(start_date, end_date, time_res)
-            
-            # Checking for matching indices in consecutive_values
             for i, sub_array in enumerate(consecutive_values):
-                match_indices = np.where(np.isin(sub_array, temp_date_array))[0]
+                match_indices = np.where(
+                    np.isin(sub_array, temp_date_array)
+                )[0]
                 if match_indices.size > 0:
-                    
                     match_info.append(i)
-                    
+
         for del_index in sorted(match_info, reverse=True):
             del consecutive_values[del_index]
 
@@ -239,8 +244,7 @@ def get_events(
     return arr_dates
 
 
-
-def remove_short(list_events:list, time_resolution=None, min_ev_dur=None):
+def remove_short(list_events: list, time_resolution=None, min_ev_dur=None):
     """
     Remove precipitation events shorter than a minimum duration.
 
@@ -280,7 +284,7 @@ def remove_short(list_events:list, time_resolution=None, min_ev_dur=None):
         ]
 
     min_duration = np.timedelta64(int(min_ev_dur), "m")
-    time_res     = np.timedelta64(int(time_resolution), "m")
+    time_res = np.timedelta64(int(time_resolution), "m")
 
     ll_short = [
         (ev[-1] - ev[0]).astype("timedelta64[m]") + time_res >= min_duration
@@ -292,7 +296,7 @@ def remove_short(list_events:list, time_resolution=None, min_ev_dur=None):
         for ev, keep in zip(list_events, ll_short)
     ]
 
-    arr_vals  = np.array(ll_short)[ll_short]
+    arr_vals = np.array(ll_short)[ll_short]
     arr_dates = np.array(ll_dates)[ll_short]
 
     filtered_list = [ev for ev, keep in zip(list_events, ll_short) if keep]
@@ -512,6 +516,7 @@ def compute_erosivity(df):
     df['erosivity_US'] = df['erosivity_EU'] * 10
     return df
 
+
 def E_kin_i_Rogler(intensity):
     """
     Unit kinetic energy after Rogler & Schwertmann (1981) [kJ m⁻² mm⁻¹].
@@ -608,31 +613,40 @@ def E_kin_i_McGregor(intensity):
     # × 0.1 converts MJ ha⁻¹ mm⁻¹ → kJ m⁻² mm⁻¹
     # No hard cap needed; exponential form naturally plateaus at ~0.029
     return 0.29 * (1 - 0.72 * np.exp(-0.082 * intensity)) * 0.1
-    
+
+
 def get_only_erosivity_events(
     df, accum_threshold=12.7, intensity_threshold=12.7,
     imax_col='imax_30', use_both_thresholds=True,
 ):
     """
-    Filter erosivity events using the Wischmeier (1959, 1979) / Wischmeier & Smith (1978) criteria,
-    also adopted by Rogler & Schwertmann (1981) and DIN 19708:2017-08.
+    Filter erosivity events using the Wischmeier (1959, 1979) /
+    Wischmeier & Smith (1978) criteria, also adopted by
+    Rogler & Schwertmann (1981) and DIN 19708:2017-08.
 
     An event is erosive if either:
-        (i)  total accumulated event depth  >= accum_threshold    [mm]  (default 12.7 mm = 0.5 in)
-        (ii) peak window intensity          >= intensity_threshold [mm/h] (default 12.7 mm/h)
+        (i)  total accumulated event depth >= accum_threshold [mm]
+             (default 12.7 mm = 0.5 in)
+        (ii) peak window intensity >= intensity_threshold [mm/h]
+             (default 12.7 mm/h)
 
-    The standard RUSLE criterion (ii) is IMax15 >= 25.4 mm/h (the maximum 15-min intensity).
-    Its value originates from the assumption that the marginal erosive event concentrates
-    6.35 mm (0.25 in) in exactly 15 min: IMax15 = 6.35 * 60/15 = 25.4 mm/h.
+    The standard RUSLE criterion (ii) is IMax15 >= 25.4 mm/h
+    (the maximum 15-min intensity). Its value originates from the
+    assumption that the marginal erosive event concentrates
+    6.35 mm (0.25 in) in exactly 15 min:
+    IMax15 = 6.35 * 60/15 = 25.4 mm/h.
 
-    The same physical scenario observed at different accumulation window sizes gives:
-        15-min window  →  IMax15 = 6.35 * 60/15 = 25.4 mm/h  (standard RUSLE criterion)
-        30-min window  →  IMax30 = 6.35 * 60/30 = 12.7 mm/h  (alternative, wider window)
+    The same physical scenario at different window sizes gives:
+        15-min window  →  IMax15 = 6.35 * 60/15 = 25.4 mm/h
+                          (standard RUSLE criterion)
+        30-min window  →  IMax30 = 6.35 * 60/30 = 12.7 mm/h
+                          (alternative, wider window)
         60-min window  →  IMax60 = 6.35 * 60/60 =  6.35 mm/h
 
-    The 30-min window (default here, intensity_threshold=12.7) is an alternative that is
-    looser in practice: it allows the same 6.35 mm to arrive over the full 30-min window,
-    so it selects more events than IMax15 >= 25.4 mm/h on identical data.
+    The 30-min window (default here, intensity_threshold=12.7) is an
+    alternative that is looser in practice: it allows the same 6.35 mm
+    to arrive over the full 30-min window, so it selects more events
+    than IMax15 >= 25.4 mm/h on identical data.
 
     Parameters
     ----------

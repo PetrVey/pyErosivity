@@ -665,8 +665,8 @@ for col_idx, appr in enumerate(_APPROACHES):
         ax.text(
             0.98, 0.98, f'R = {r_annual:.0f} MJ·mm/ha/h/yr',
             transform=ax.transAxes, ha='right', va='top',
-            fontsize=7,
-            bbox=dict(facecolor='white', alpha=0.7, pad=2, linewidth=0),
+            fontsize=10, fontweight='bold',
+            bbox=dict(facecolor='white', alpha=0.85, pad=4, linewidth=0),
         )
         ax.grid(True, alpha=0.4)
         if col_idx == 1:
