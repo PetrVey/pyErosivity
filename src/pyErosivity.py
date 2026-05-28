@@ -4,7 +4,7 @@ Created on Fri Nov 29 10:25:32 2024
 
 @author: Petr
 
-pyErosivity — rainfall erosivity (R-factor / EI30) from precipitation time series.
+pyErosivity: rainfall erosivity (R-factor / EI30) from precipitation time series.
 
 Expected call order
 -------------------
@@ -122,7 +122,7 @@ def get_events(
     check_gaps : bool, optional
         If True, remove events whose start/end falls within `separation`
         hours of a data gap or the dataset boundary. Default True.
-        Dropped events produce no warning — set check_gaps=False if you
+        Dropped events produce no warning. Set check_gaps=False if you
         need to audit boundary losses yourself.
     time_resolution : int or float, optional
         Data time step [minutes]. Required when min_ev_dur is provided.
@@ -234,7 +234,7 @@ def get_events(
         )
         return arr_dates
 
-    # No duration filter — convert list to arr_dates directly
+    # No duration filter: convert list to arr_dates directly
     arr_dates = np.array([(ev[0], ev[-1]) for ev in consecutive_values])
     return arr_dates
 
@@ -369,7 +369,7 @@ def get_events_values(
             imax_60      : peak 60-min intensity [mm/h]
         Columns for windows not supported by the resolution are absent.
         event_duration is always present regardless of resolution.
-        EI30 (erosivity_US) is not included — call compute_erosivity() next.
+        EI30 (erosivity_US) is not included. Call compute_erosivity() next.
     """
     if time_resolution is None:
         raise ValueError("time_resolution must be provided.")
@@ -494,7 +494,7 @@ def compute_erosivity(df):
     """
     if 'erosivity_US' in df.columns:
         raise ValueError(
-            "erosivity_US already exists — compute_erosivity was called "
+            "erosivity_US already exists. compute_erosivity was called "
             "twice. Call it once on the output of get_events_values."
         )
     if 'imax_30' in df.columns:
@@ -574,7 +574,7 @@ def E_kin_i_BrFr(intensity):
     """
     # × 0.1 converts MJ ha⁻¹ mm⁻¹ → kJ m⁻² mm⁻¹
     # (1 MJ ha⁻¹ = 100 J m⁻² = 0.1 kJ m⁻²)
-    # No hard cap needed — exponential form naturally plateaus at ~0.029
+    # No hard cap needed; exponential form naturally plateaus at ~0.029
     return 0.29 * (1 - 0.72 * np.exp(-0.05 * intensity)) * 0.1
 
 
@@ -606,7 +606,7 @@ def E_kin_i_McGregor(intensity):
         Unit kinetic energy [kJ m⁻² mm⁻¹].
     """
     # × 0.1 converts MJ ha⁻¹ mm⁻¹ → kJ m⁻² mm⁻¹
-    # No hard cap needed — exponential form naturally plateaus at ~0.029
+    # No hard cap needed; exponential form naturally plateaus at ~0.029
     return 0.29 * (1 - 0.72 * np.exp(-0.082 * intensity)) * 0.1
     
 def get_only_erosivity_events(
@@ -621,7 +621,7 @@ def get_only_erosivity_events(
         (i)  total accumulated event depth  >= accum_threshold    [mm]  (default 12.7 mm = 0.5 in)
         (ii) peak window intensity          >= intensity_threshold [mm/h] (default 12.7 mm/h)
 
-    The standard RUSLE criterion (ii) is IMax15 >= 25.4 mm/h — the maximum 15-min intensity.
+    The standard RUSLE criterion (ii) is IMax15 >= 25.4 mm/h (the maximum 15-min intensity).
     Its value originates from the assumption that the marginal erosive event concentrates
     6.35 mm (0.25 in) in exactly 15 min: IMax15 = 6.35 * 60/15 = 25.4 mm/h.
 
@@ -638,7 +638,7 @@ def get_only_erosivity_events(
     ----------
     df : pd.DataFrame
         Output of get_events_values or compute_erosivity. Only
-        event_depth and imax_col are required — compute_erosivity
+        event_depth and imax_col are required. compute_erosivity
         does not need to be called before this function.
     accum_threshold : float, optional
         Minimum total event depth [mm] — criterion (i). Default 12.7.
@@ -702,7 +702,7 @@ def apply_rusle_split(
     ---------------------------------
     If a parent event fails both erosivity criteria (depth < accum_threshold
     AND intensity < intensity_threshold), no sub-event produced by splitting
-    can pass either — depth can only decrease after splitting, and the
+    can pass either. Depth can only decrease after splitting, and the
     parent's imax is the maximum over all its sub-periods.  Therefore,
     applying Renard splitting before or after the erosivity filter gives
     identical results.  Filtering first limits the expensive split-and-
@@ -721,13 +721,13 @@ def apply_rusle_split(
     compared against RIST 3.99 (which also implements Renard but in inches
     with undisclosed precision):
 
-      trailing-only  — 890 erosive events (RIST: 962): over-splits because
-                       early drizzle steps see no past rain and get falsely
-                       flagged as split points.
-      forward-only   — 888 erosive events: same problem at storm ends.
-      bidirectional  — 959 erosive events: closest to RIST; residual
-                       difference is unexplained and irresolvable without
-                       RIST source code.
+      trailing-only:  890 erosive events (RIST: 962): over-splits because
+                      early drizzle steps see no past rain and get falsely
+                      flagged as split points.
+      forward-only:   888 erosive events: same problem at storm ends.
+      bidirectional:  959 erosive events: closest to RIST; residual
+                      difference is unexplained and irresolvable without
+                      RIST source code.
 
     The small remaining gap (959 vs 962) originates from RIST's internal
     inch-based arithmetic with unknown rounding, not from a bug here.
@@ -884,7 +884,7 @@ def get_mean_annual_stats(
         Aggregation note: n_events and erosivity are summed per year
         first, then averaged across years (sum-then-mean).  depth and
         intensity are averaged per year first (mean event value per
-        year), then averaged across years (mean-of-means) — so they
+        year), then averaged across years (mean-of-means). They
         represent the typical event, not the annual total.
     """
     years = df[year_col].dt.year
@@ -1007,7 +1007,7 @@ def find_optimal_thr_imax30(
 
 def bootstrapping_erosivity_60min(
     df_erosivity, niter=1000, M=None,
-    imax_col='imax_30', erosivity_col='erosivity_US',
+    imax_col='imax_60', erosivity_col='erosivity_US',
 ):
     """
     Bootstrap annual erosivity statistics from an erosivity event DataFrame.
@@ -1116,7 +1116,7 @@ def compute_sf_annual_r(
     r_target = _annual(df_target)
     if r_target.mean() == 0:
         raise ValueError(
-            "Target mean annual R is zero — cannot compute SF."
+            "Target mean annual R is zero. Cannot compute SF."
         )
     sf = float(r_ref.mean() / r_target.mean())
     return sf, r_ref, r_target
@@ -1170,7 +1170,7 @@ def compute_sf_per_event(
     )
     if merged['_ei_tgt'].mean() == 0:
         raise ValueError(
-            "Target mean EI is zero — cannot compute SF."
+            "Target mean EI is zero. Cannot compute SF."
         )
     sf = float(merged['_ei_ref'].mean() / merged['_ei_tgt'].mean())
     return sf, merged['_ei_ref'], merged['_ei_tgt'], len(merged)
@@ -1178,7 +1178,7 @@ def compute_sf_per_event(
 
 def bootstrapping_erosivity_CPM_60min(
     df_erosivity, niter=1000, M=None, randy=None,
-    imax_col='imax_30', erosivity_col='erosivity_US',
+    imax_col='imax_60', erosivity_col='erosivity_US',
 ):
     """
     Bootstrap annual erosivity statistics with optional pre-defined sample

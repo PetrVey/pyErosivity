@@ -99,7 +99,7 @@ python examples/test_bootstrapping_CPM.py
 
 The first study validates pyErosivity against RIST 3.99 (Rainfall Intensity Summarization Tool), the official USDA software used to compute erosivity for the official US R-factor maps. RIST is the de-facto reference implementation of RUSLE, so matching it is the natural baseline before exploring any extensions.
 
-**Data:** Station VE_0091, 5-min resolution, 1990–2020 (31 years).
+**Data:** Station VE_0091, 5-min resolution, 1990–2020 (31 years). The station is located near Kreuzbergpass, Italy (46.652097° N, 12.423971° E), an Alpine site at approximately 1600 m a.s.l.
 
 **RIST configuration: Station and data format**
 
