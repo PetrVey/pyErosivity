@@ -329,14 +329,18 @@ print(
 
 scatter_panels = [
     {
-        'title': f'OBS 1h | IMax60 >= {thr_opt:.2f} mm/h',
+        'title': (
+            f'OBS 1h\n'
+            f'IMax60 >= {thr_opt:.2f} mm/h | SF = {sf:.3f}'
+        ),
         'df_all': df_all_obs,
         'thr': thr_opt,
         'stats': stats_obs,
     },
     {
         'title': (
-            f'CPM 1h | OBS-cal\nIMax60 >= {thr_opt:.2f} mm/h'
+            f'CPM 1h — OBS calibration applied\n'
+            f'IMax60 >= {thr_opt:.2f} mm/h | SF = {sf:.3f}'
         ),
         'df_all': df_all_cpm,
         'thr': thr_opt,
@@ -344,7 +348,8 @@ scatter_panels = [
     },
     {
         'title': (
-            f'CPM 1h | CPM-cal\nIMax60 >= {thr_opt_cpm:.2f} mm/h'
+            f'CPM 1h — CPM-own calibration\n'
+            f'IMax60 >= {thr_opt_cpm:.2f} mm/h | SF = {sf_cpm:.3f}'
         ),
         'df_all': df_all_cpm,
         'thr': thr_opt_cpm,
@@ -406,8 +411,9 @@ for ax, p in zip(axes_sc, scatter_panels):
         f'R = {p["stats"]["erosivity"]["mean"]:.0f}'
         f' MJ*mm/ha/h/yr\n'
         f'{p["stats"]["n_events"]["mean"]:.1f} ev/yr',
-        transform=ax.transAxes, ha='right', va='top', fontsize=8,
-        bbox=dict(facecolor='white', alpha=0.75, pad=2, linewidth=0),
+        transform=ax.transAxes, ha='right', va='top', fontsize=12,
+        fontweight='bold',
+        bbox=dict(facecolor='white', alpha=0.85, pad=4, linewidth=0),
     )
 
 plt.suptitle(

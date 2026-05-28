@@ -10,7 +10,7 @@ Rainfall erosivity quantifies the capacity of rain to detach and transport soil,
 
 2. **Event filtering** -- events shorter than a minimum duration are discarded (`remove_short`).
 
-3. **Per-event metrics** -- for each event and each accumulation window (e.g. 30 min for IMax30), a true sliding-window convolution computes peak accumulated depth and converts it to intensity. Kinetic energy and erosivity (EI30) are computed over the full event using the DIN 19708 / Rogler & Schwertmann (1981) formula.
+3. **Per-event metrics** -- for each event and each accumulation window (e.g. 30 min for IMax30), a true sliding-window convolution computes peak accumulated depth and converts it to intensity. Kinetic energy (E_kin) is summed over the event by integrating a rainfall intensity-to-kinetic-energy relationship (here DIN 19708 / Rogler & Schwertmann 1981): higher intensity drops hit harder and carry more energy per unit depth. The erosivity index EI30 is then the product of E_kin and the peak 30-min intensity IMax30. IMax30 acts as a proxy for the storm's hydraulic aggressiveness: two events with the same total depth but different peak intensities have very different erosive power.
 
 4. **Erosivity event selection** -- `get_only_erosivity_events` implements the Wischmeier (1959, 1979) / Wischmeier & Smith (1978) / DIN 19708:2017-08 dual criterion: IMax15 >= 25.4 mm/h (standard) **or** total depth >= 12.7 mm. An alternative formulation using IMax30 >= 12.7 mm/h is also supported. The wider accumulation window makes it looser in practice.
 
@@ -61,6 +61,18 @@ The dual criterion applied by `get_only_erosivity_events` is `event_depth` >= 12
 - McGregor, K. C., Binger, R. L. & Bowie, A. J. (1995). Erosivity index values for northern Mississippi. *Trans. ASAE*, 38(4), 1039-1047. *(exponential form, RUSLE2)*
 - van Dijk, A. I. J. M., Bruijnzeel, L. A. & Rosewell, C. J. (2002). Rainfall intensity–kinetic energy relationships: a critical literature appraisal. *J. Hydrology*, 261(1), 1-23. https://doi.org/10.1016/S0022-1694(02)00020-3 *(review; basis for 76.2 mm/h intensity cap)*
 
+### Recommended readings
+
+The physics connecting raindrop size distributions to rainfall kinetic energy:
+
+- **van Dijk, A. I. J. M., Bruijnzeel, L. A. & Rosewell, C. J. (2002).** Rainfall intensity–kinetic energy relationships: a critical literature appraisal. *J. Hydrology*, 261(1), 1–23. https://doi.org/10.1016/S0022-1694(02)00020-3
+
+  A comprehensive review of R–E_k equations across climates. Shows that kinetic energy per unit depth (e_k) rises with intensity but levels off above roughly 76 mm/h, where drop breakup prevents further growth in median drop size. The widely-used general form is `e_k = 28.3[1 − 0.52 exp(−0.042R)]` (J m⁻² mm⁻¹). pyErosivity uses this cap when applying the Rogler & Schwertmann (1981) / DIN 19708 formula.
+
+- **Uijlenhoet, R. & Stricker, J. N. M. (1999).** A consistent rainfall parameterization based on the exponential raindrop size distribution. *J. Hydrology*, 218, 101–127. https://doi.org/10.1016/S0022-1694(99)00032-3
+
+  Derives a unified set of power-law relationships between rainfall rate, mean drop diameter, fall velocity and kinetic energy flux directly from the exponential raindrop size distribution (Marshall & Palmer 1948 form). The key physical insight: larger drops fall faster and kinetic energy per drop scales as the fifth or sixth power of diameter, so even a modest increase in drop size at higher intensities translates into a large gain in erosive power — until drop breakup sets an upper limit.
+
 ## Installation
 
 ### 1. Create the conda environment
@@ -85,8 +97,8 @@ Example scripts are in the `examples/` folder and must be run from the repo root
 ```bash
 python examples/01_example_RISTvsPyErosivity_only_Imax30.py
 python examples/02_example_depth_vs_imax.py
-python examples/test_bootstrapping.py
-python examples/test_bootstrapping_CPM.py
+python examples/03_example_calibration.py
+python examples/04_example_bootstrapping.py
 ```
 
 ---
@@ -284,3 +296,55 @@ Key observations:
 - SF-R and SF-EI give similar but not identical correction factors. SF-R averages over years while SF-EI averages over matched events, so the two are sensitive to different aspects of the year-to-year variability.
 - For the calibrated threshold the SF is smaller than for the naive run because threshold calibration already removes part of the selection bias. The remaining bias is purely the intensity underestimation inside each event.
 - After correction, both the naive and calibrated runs converge to the same mean annual R, confirming that the SF approach successfully decouples the selection bias from the intensity bias.
+
+---
+
+### Study 4: Bootstrap uncertainty and OBS vs CPM comparison
+
+**Script:** `examples/04_example_bootstrapping.py`
+
+Studies 1 to 3 established how to derive a bias-corrected hourly erosivity estimate from gauge observations. Study 4 addresses two further questions. First, how uncertain is the mean annual R-factor given a finite record length? Second, how does a convection-permitting climate model (CPM) compare to the observed erosivity when the same bias-correction pipeline is applied?
+
+#### Datasets
+
+**OBS:** Station VE_0091, 1-hour gauge observations, 1990–2020 (31 years). The same station described in Study 1 (near Kreuzbergpass, Italy, 46.652° N, 12.424° E, ~1600 m a.s.l.).
+
+**CPM:** ETH convection-permitting model, historical run, 1996–2005 (10 years). See Dallan et al. (2023, 2024) for details on the simulation and its known biases at Alpine stations.
+
+#### Calibration transfer
+
+The intensity threshold and scaling factor derived in Study 3 from OBS 5-min vs OBS 1h are transferred directly to the CPM. This is the simplest assumption: the temporal resolution bias is a property of the accumulation window, not of the dataset. A second calibration is then performed with the CPM data itself as the target, finding a CPM-own threshold and SF against the 5-min OBS reference over the overlapping 1996–2005 period. This gives three configurations for comparison:
+
+| Configuration | Threshold | SF | Description |
+|---|---|---|---|
+| OBS | calibrated from OBS | from OBS | Observed erosivity, bias-corrected |
+| CPM OBS-cal | same as OBS | same as OBS | CPM with OBS calibration transferred |
+| CPM CPM-cal | calibrated from CPM | from CPM vs 5-min ref | CPM with its own threshold and SF |
+
+#### Wet bias diagnostic
+
+Before any event extraction, mean annual total precipitation is computed for each dataset. A large wet bias in the CPM (found to be approximately +95% at this station relative to OBS) indicates that the model generates roughly twice the observed annual rainfall. This is consistent with the known positive precipitation bias of some CPM configurations at Alpine sites (Dallan et al. 2024, who report ~55% bias in 24-hour mean annual maxima at this station). The wet bias propagates directly into the erosivity pipeline: more rainfall means more events exceeding the 12.7 mm depth criterion, leading to a higher erosive event count and R-factor even after threshold calibration.
+
+#### Classification scatter
+
+![Classification scatter OBS vs CPM](fig/04_fig0.jpg)
+
+Three panels show the event depth vs IMax60 classification for each configuration. The OBS panel and the CPM OBS-cal panel use the same threshold line; the CPM CPM-cal panel uses the CPM-own threshold. Each panel annotates the resulting mean annual R-factor and event count directly. The comparison immediately reveals whether the elevated CPM event count comes from the depth-only zone (depth criterion triggered by the wet bias) or from the intensity zone.
+
+#### Bootstrap uncertainty
+
+Bootstrap resampling draws calendar years with replacement (1000 iterations). For OBS the sample pool is 31 years; for CPM it is 10 years. The CPM bootstrap uses a pre-defined year-draw sequence (`randy.txt`) shared across ensemble members so that results from different model runs are directly comparable (Dallan et al. 2023).
+
+![Bootstrap distributions OBS vs CPM](fig/04_fig1.jpg)
+
+Four statistics are shown as side-by-side boxplots: events per year, mean IMax60, mean event depth, and mean annual R-factor. The diamond marker inside each box is the population mean for the full record. The width of each box reflects sampling uncertainty given the available record length. The shorter CPM record (10 years) produces wider boxes than the 31-year OBS record.
+
+Key observations:
+- Sampling uncertainty for the 10-year CPM record is substantially larger than for the 31-year OBS record. A single anomalous year has much more influence on the 10-year mean.
+- Transferring OBS calibration parameters to CPM does not remove the wet-bias-driven event inflation. The CPM CPM-cal configuration, which finds its own threshold and SF, converges to a corrected R-factor close to the 5-min OBS reference over the 1996–2005 window, but the event count and depth distributions remain affected by the model's precipitation climatology.
+- The comparison highlights that threshold calibration and SF correction address temporal resolution bias but do not replace a full bias correction of the underlying precipitation field.
+
+#### References
+
+- Dallan, E., Marra, F., Fosser, G., Marani, M., Formetta, G., Schär, C., and Borga, M. (2023). How well does a convection-permitting regional climate model represent the reverse orographic effect of extreme hourly precipitation? *Hydrol. Earth Syst. Sci.*, 27, 1133–1149. https://doi.org/10.5194/hess-27-1133-2023
+- Dallan, E., Borga, M., Fosser, G., Canale, A., Roghani, B., Marani, M., & Marra, F. (2024). A method to assess and explain changes in sub-daily precipitation return levels from convection-permitting simulations. *Water Resources Research*, 60, e2023WR035969. https://doi.org/10.1029/2023WR035969
