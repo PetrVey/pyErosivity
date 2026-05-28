@@ -24,7 +24,6 @@ from pyErosivity import get_events
 from pyErosivity import get_events_values
 from pyErosivity import compute_erosivity
 from pyErosivity import get_only_erosivity_events
-from pyErosivity import find_optimal_thr_imax30
 from pyErosivity import get_mean_annual_stats
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -196,72 +195,6 @@ for res in RESOLUTIONS:
         'R-factor':          round(r_factor, 1),
     })
 
-# Optimise IMax threshold for 60-min data to match 5-min mean annual count
-df_5_erosive = results['5 min']['df_erosive']
-target_mean_annual = (
-    df_5_erosive
-    .groupby(df_5_erosive['event_start'].dt.year)
-    .size()
-    .reindex(all_years, fill_value=0)
-    .mean()
-)
-df_all_60 = results['60 min']['df_all']
-
-thr_opt, achieved, residual = find_optimal_thr_imax30(
-    df_all_60,
-    target_mean_annual,
-    imax_col='imax_60',
-    use_both_thresholds=True,
-)
-print(
-    f"60 min opt | target: {target_mean_annual:.2f} ev/yr | "
-    f"achieved: {achieved:.2f} ev/yr | thr: {thr_opt:.4f} mm/h | "
-    f"residual: {residual:.2f}"
-)
-
-df_erosive_opt = get_only_erosivity_events(
-    df_all_60,
-    imax_col='imax_60',
-    intensity_threshold=thr_opt,
-    accum_threshold=accum_threshold,
-    use_both_thresholds=True,
-)
-
-mask_i_opt = df_erosive_opt['imax_60'] >= thr_opt
-mask_d_opt = df_erosive_opt['event_depth'] >= accum_threshold
-
-results['60 min (opt)'] = {
-    'df_all':     df_all_60,
-    'df_erosive': df_erosive_opt,
-    'imax_only':  df_erosive_opt[mask_i_opt & ~mask_d_opt],
-    'both':       df_erosive_opt[mask_i_opt & mask_d_opt],
-    'depth_only': df_erosive_opt[~mask_i_opt & mask_d_opt],
-    'none':       df_all_60[
-        ~(df_all_60['imax_60'] >= thr_opt)
-        & ~(df_all_60['event_depth'] >= accum_threshold)
-    ],
-    'imax_col':   'imax_60',
-    'thr_imax30': thr_opt,
-}
-
-m0_o = mean_annual(results['60 min (opt)']['none'], all_years)
-m1_o = mean_annual(results['60 min (opt)']['imax_only'], all_years)
-m12_o = mean_annual(results['60 min (opt)']['both'], all_years)
-m2_o = mean_annual(results['60 min (opt)']['depth_only'], all_years)
-r_factor_opt = get_mean_annual_stats(
-    df_erosive_opt, all_years=all_years,
-)['erosivity']['mean']
-
-table_rows.append({
-    'Resolution':        '60 min (opt)',
-    'Total ev/yr':       round(m0_o + m1_o + m12_o + m2_o, 1),
-    'Non-erosive ev/yr': round(m0_o, 1),
-    'Erosive ev/yr':     round(m1_o + m12_o + m2_o, 1),
-    'IMax only ev/yr':   round(m1_o, 1),
-    'Both ev/yr':        round(m12_o, 1),
-    'Depth only ev/yr':  round(m2_o, 1),
-    'R-factor':          round(r_factor_opt, 1),
-})
 
 print(f"Total calculation time: {time.time() - start_time:.2f} s\n")
 df_table = pd.DataFrame(table_rows).set_index('Resolution')
@@ -758,81 +691,3 @@ if save_results:
     )
 plt.show()
 
-# %%
-# Focused figure: 5 min vs 60 min vs 60 min (opt) — IMax30 criterion
-_FOCUS_LABELS = ['5 min', '60 min', '60 min (opt)']
-
-fig_opt, axs_opt = plt.subplots(1, 3, figsize=(16, 5))
-fig_opt.suptitle(
-    f"{station_num} — 5 min vs 60 min vs 60 min (opt)\n"
-    f"Criterion (i): depth ≥ {accum_threshold} mm  |  "
-    f"Criterion (ii): IMax30 ≥ {thr_imax30} mm/h",
-    fontsize=13, fontweight='bold',
-)
-
-for ax, res_label in zip(axs_opt, _FOCUS_LABELS):
-    r = results[res_label]
-    ic = r['imax_col']
-    n1  = len(r['imax_only'])
-    n12 = len(r['both'])
-    n2  = len(r['depth_only'])
-    r_annual = (
-        r['df_erosive']
-        .groupby(r['df_erosive']['event_start'].dt.year)['erosivity_US']
-        .sum()
-        .reindex(all_years, fill_value=0)
-        .mean()
-    )
-
-    ax.scatter(
-        r['none']['event_depth'], r['none'][ic],
-        color=COLORS['none'], s=12, label='Non-erosive', zorder=1,
-    )
-    ax.scatter(
-        r['imax_only']['event_depth'], r['imax_only'][ic],
-        color=COLORS['imax_only'], s=15,
-        label=f'IMax only ({n1})', zorder=2,
-    )
-    ax.scatter(
-        r['both']['event_depth'], r['both'][ic],
-        color=COLORS['both'], s=15, marker='s',
-        label=f'Both ({n12})', zorder=3,
-    )
-    ax.scatter(
-        r['depth_only']['event_depth'], r['depth_only'][ic],
-        color=COLORS['depth_only'], s=18, marker='^',
-        label=f'Depth only ({n2})', zorder=4,
-    )
-    ax.axhline(
-        r.get('thr_imax30', thr_imax30),
-        color=COLORS['imax_only'], linestyle='--', linewidth=0.8,
-    )
-    ax.axvline(
-        accum_threshold,
-        color=COLORS['depth_only'], linestyle='--', linewidth=0.8,
-    )
-    ax.set_xlim(0, 150)
-    ax.set_ylim(0, 100)
-    ax.set_xlabel('Event depth [mm]')
-    ax.set_ylabel(f'{ic} [mm/h]')
-    ax.set_title(res_label)
-    ax.legend(
-        fontsize=8, loc='upper left',
-        title=f'Erosive: {n1 + n12 + n2}',
-        title_fontsize=8,
-    )
-    ax.text(
-        0.98, 0.98, f'R = {r_annual:.0f} MJ·mm/ha/h/yr',
-        transform=ax.transAxes, ha='right', va='top',
-        fontsize=8,
-        bbox=dict(facecolor='white', alpha=0.7, pad=2, linewidth=0),
-    )
-    ax.grid(True)
-
-plt.tight_layout()
-if save_results:
-    fig_opt.savefig(
-        os.path.join(_FIG, '02_fig5.jpg'),
-        format='jpeg', dpi=300,
-    )
-plt.show()

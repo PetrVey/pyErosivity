@@ -365,7 +365,7 @@ def get_events_values(
                            and 10 % resolution == 0
             imax_15      : peak 15-min intensity [mm/h]  — if resolution <= 15 min
                            and 15 % resolution == 0
-            imax_30      : peak 30-min intensity [mm/h]  — criterion (ii) standard
+            imax_30      : peak 30-min intensity [mm/h]  — used for criterion (ii) when imax_15 unavailable
             imax_60      : peak 60-min intensity [mm/h]
         Columns for windows not supported by the resolution are absent.
         event_duration is always present regardless of resolution.
@@ -621,21 +621,18 @@ def get_only_erosivity_events(
         (i)  total accumulated event depth  >= accum_threshold    [mm]  (default 12.7 mm = 0.5 in)
         (ii) peak window intensity          >= intensity_threshold [mm/h] (default 12.7 mm/h)
 
-    The 12.7 mm/h default for criterion (ii) is IMax30 — the maximum 30-min intensity — which is
-    the standard Wischmeier (1959) threshold.  Its value originates from the assumption that the
-    marginal erosive event concentrates 6.35 mm (0.25 in) in 15 min with negligible rain outside
-    that 15-min window.  Under this assumption, the 30-min rolling window always captures those
-    6.35 mm, giving IMax30 = 6.35 * 60/30 = 12.7 mm/h.
+    The standard RUSLE criterion (ii) is IMax15 >= 25.4 mm/h — the maximum 15-min intensity.
+    Its value originates from the assumption that the marginal erosive event concentrates
+    6.35 mm (0.25 in) in exactly 15 min: IMax15 = 6.35 * 60/15 = 25.4 mm/h.
 
-    The same physical scenario observed at different accumulation window sizes would appear as:
-        15-min window  →  IMax15 = 6.35 * 60/15 = 25.4 mm/h
-        30-min window  →  IMax30 = 6.35 * 60/30 = 12.7 mm/h  (standard default)
+    The same physical scenario observed at different accumulation window sizes gives:
+        15-min window  →  IMax15 = 6.35 * 60/15 = 25.4 mm/h  (standard RUSLE criterion)
+        30-min window  →  IMax30 = 6.35 * 60/30 = 12.7 mm/h  (alternative, wider window)
         60-min window  →  IMax60 = 6.35 * 60/60 =  6.35 mm/h
 
-    These are NOT interchangeable thresholds to swap by resolution — 12.7 mm/h for IMax30 is the
-    fixed criterion.  The table only illustrates how the same assumed event translates across window
-    sizes.  The 25.4 mm/h figure further assumes that all 6.35 mm falls uniformly over the full
-    15 min, which is rarely the case in practice.
+    The 30-min window (default here, intensity_threshold=12.7) is an alternative that is
+    looser in practice: it allows the same 6.35 mm to arrive over the full 30-min window,
+    so it selects more events than IMax15 >= 25.4 mm/h on identical data.
 
     Parameters
     ----------
@@ -647,7 +644,8 @@ def get_only_erosivity_events(
         Minimum total event depth [mm] — criterion (i). Default 12.7.
     intensity_threshold : float, optional
         Minimum peak intensity [mm/h] — criterion (ii). Default 12.7
-        (IMax30 threshold, Wischmeier 1959).
+        (IMax30 alternative threshold). For the standard IMax15 criterion
+        use intensity_threshold=25.4 with imax_col='imax_15'.
     imax_col : str, optional
         Column to use for criterion (ii). Default 'imax_30'. Use the
         finest window your data resolution supports.
@@ -1071,6 +1069,111 @@ def bootstrapping_erosivity_60min(
         bootstrap_summaries.append(means)
 
     return pd.DataFrame(bootstrap_summaries).set_index('sample')
+
+
+def compute_sf_annual_r(
+    df_ref, df_target,
+    ei30_col='erosivity_US',
+    all_years=None,
+):
+    """
+    Compute scaling factor (SF) from annual R-factor comparison.
+
+    Pairs both DataFrames year by year. SF is the ratio of mean annual
+    R-factors: SF = mean(R_ref) / mean(R_target). Multiply target event
+    erosivity values by SF to correct the systematic bias.
+
+    Parameters
+    ----------
+    df_ref : pd.DataFrame
+        Reference erosivity events. Must contain 'event_start' and
+        ei30_col.
+    df_target : pd.DataFrame
+        Target erosivity events to correct.
+    ei30_col : str, optional
+        Erosivity column. Default 'erosivity_US'.
+    all_years : list of int, optional
+        Full year list. Years with zero erosive events are included
+        (fill_value=0) so the denominator equals the record length.
+
+    Returns
+    -------
+    sf : float
+        Scaling factor (> 1 when target underestimates reference).
+    r_ref : pd.Series
+        Annual R-factor of reference indexed by year.
+    r_target : pd.Series
+        Annual R-factor of target indexed by year.
+    """
+    def _annual(df):
+        years = df['event_start'].dt.year
+        s = df.groupby(years)[ei30_col].sum()
+        if all_years is not None:
+            s = s.reindex(all_years, fill_value=0)
+        return s
+
+    r_ref = _annual(df_ref)
+    r_target = _annual(df_target)
+    if r_target.mean() == 0:
+        raise ValueError(
+            "Target mean annual R is zero — cannot compute SF."
+        )
+    sf = float(r_ref.mean() / r_target.mean())
+    return sf, r_ref, r_target
+
+
+def compute_sf_per_event(
+    df_ref, df_target,
+    ei30_col='erosivity_US',
+):
+    """
+    Compute scaling factor (SF) from per-event EI comparison.
+
+    Events are matched by event_start date. Only events present in
+    both datasets (inner join on date) are used. SF is the ratio of
+    mean matched EI values: SF = mean(EI_ref) / mean(EI_target).
+
+    Parameters
+    ----------
+    df_ref : pd.DataFrame
+        Reference erosivity events. Must contain 'event_start' and
+        ei30_col.
+    df_target : pd.DataFrame
+        Target erosivity events to correct.
+    ei30_col : str, optional
+        Erosivity column. Default 'erosivity_US'.
+
+    Returns
+    -------
+    sf : float
+        Scaling factor.
+    ei_ref : pd.Series
+        EI values of matched reference events.
+    ei_target : pd.Series
+        EI values of matched target events.
+    n_matched : int
+        Number of matched event pairs.
+    """
+    ref = df_ref[['event_start', ei30_col]].copy()
+    tgt = df_target[['event_start', ei30_col]].copy()
+    ref['_date'] = ref['event_start'].dt.date
+    tgt['_date'] = tgt['event_start'].dt.date
+
+    merged = pd.merge(
+        ref[['_date', ei30_col]].rename(
+            columns={ei30_col: '_ei_ref'}
+        ),
+        tgt[['_date', ei30_col]].rename(
+            columns={ei30_col: '_ei_tgt'}
+        ),
+        on='_date', how='inner',
+    )
+    if merged['_ei_tgt'].mean() == 0:
+        raise ValueError(
+            "Target mean EI is zero — cannot compute SF."
+        )
+    sf = float(merged['_ei_ref'].mean() / merged['_ei_tgt'].mean())
+    return sf, merged['_ei_ref'], merged['_ei_tgt'], len(merged)
 
 
 def bootstrapping_erosivity_CPM_60min(
