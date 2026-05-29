@@ -278,24 +278,27 @@ Each panel shows event depth (x) vs peak intensity (y). The same colour scheme a
 
 #### Scaling factor correction
 
-Recovering the event count alone is not enough. The systematic intensity underestimation means EI30 remains biased. Two multiplicative scaling factors are computed to quantify and remove this remaining bias:
+Recovering the event count alone is not enough. The systematic intensity underestimation means EI30 remains biased. Three multiplicative scaling factors are computed to quantify and remove this remaining bias:
 
-**SF-R (annual R-factor approach):** pair reference and target year by year (31 scatter points), compute SF = mean(R_ref_annual) / mean(R_target_annual). Works entirely at the R-factor level; no event matching required.
+**SF-R (annual R-factor approach):** pair reference and target year by year (31 scatter points), compute SF = mean(R_ref_annual) / mean(R_target_annual). Works entirely at the R-factor level; no event matching required. Requires both datasets to cover the same calendar years.
 
-**SF-EI (per-event EI approach):** match events by start date (inner join), compute SF = mean(EI_ref_matched) / mean(EI_target_matched). Works inside the event population and captures within-event intensity bias directly.
+**SF-EI (per-event EI approach):** match events by start date (inner join), compute SF = mean(EI_ref_matched) / mean(EI_target_matched). Works inside the event population and captures within-event intensity bias directly. Raises an error if fewer than 50 % of events match, guarding against mismatched datasets.
 
-Both SFs are then applied to bring the 60-min R-factor into agreement with the 5-min reference.
+**SF-clim (climatological mean approach):** compute the mean annual R of each dataset independently over its own period, then SF = mean(R_ref) / mean(R_target). No year-by-year pairing required — designed for datasets that cover different calendar periods (e.g. observations vs climate model output). Equivalent to SF-R when both datasets cover the same years.
+
+All three SFs are applied to bring the 60-min R-factor into agreement with the 5-min reference.
 
 #### Before / after correction
 
 ![Before and after SF correction](fig/03_fig3.jpg)
 
-The figure shows 2 rows x 4 columns. Each row covers one SF approach; within each row the left pair is the naive run and the right pair is the calibrated run. The dashed 1:1 line is the target; the arrow marks the before to after correction. After applying the appropriate SF, mean annual R aligns with the 5-min reference for both approaches and both threshold settings.
+The figure shows 3 rows × 4 columns. Each row covers one SF approach; within each row the left pair is the naive run and the right pair is the calibrated run. The dashed 1:1 line is the target; the double-headed arrow in each scatter panel marks the gap between the uncorrected bias line and the 1:1 line, annotated with the SF value. After applying the appropriate SF, mean annual R aligns with the 5-min reference for all three approaches and both threshold settings.
 
 Key observations:
 - SF-R and SF-EI give similar but not identical correction factors. SF-R averages over years while SF-EI averages over matched events, so the two are sensitive to different aspects of the year-to-year variability.
+- SF-clim gives the same result as SF-R when both datasets cover the same period, confirming consistency. Its advantage appears when the two datasets cover different periods (see Study 4).
 - For the calibrated threshold the SF is smaller than for the naive run because threshold calibration already removes part of the selection bias. The remaining bias is purely the intensity underestimation inside each event.
-- After correction, both the naive and calibrated runs converge to the same mean annual R, confirming that the SF approach successfully decouples the selection bias from the intensity bias.
+- After correction, all three approaches converge to the same mean annual R, confirming that the SF method successfully decouples selection bias from intensity bias.
 
 ---
 
@@ -313,7 +316,9 @@ Studies 1 to 3 established how to derive a bias-corrected hourly erosivity estim
 
 #### Calibration transfer
 
-The intensity threshold and scaling factor derived in Study 3 from OBS 5-min vs OBS 1h are transferred directly to the CPM. This is the simplest assumption: the temporal resolution bias is a property of the accumulation window, not of the dataset. A second calibration is then performed with the CPM data itself as the target, finding a CPM-own threshold and SF against the 5-min OBS reference over the overlapping 1996–2005 period. This gives three configurations for comparison:
+The intensity threshold and scaling factor derived in Study 3 from OBS 5-min vs OBS 1h are transferred directly to the CPM. This is the simplest assumption: the temporal resolution bias is a property of the accumulation window, not of the dataset. A second calibration is then performed with the CPM data itself as the target, finding a CPM-own threshold and SF against the 5-min OBS reference.
+
+Because OBS (1990–2020) and CPM (1996–2005) cover different calendar periods, both SF computations use `compute_sf_clim` — the climatological mean approach that compares mean annual R across each dataset's own period without requiring year-by-year pairing. This gives three configurations for comparison:
 
 | Configuration | Threshold | SF | Description |
 |---|---|---|---|

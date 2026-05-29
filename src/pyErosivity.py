@@ -4,7 +4,8 @@ Created on Fri Nov 29 10:25:32 2024
 
 @author: Petr
 
-pyErosivity: rainfall erosivity (R-factor / EI30) from precipitation time series.
+pyErosivity: rainfall erosivity (R-factor / EI30) from precipitation 
+time series.
 
 Expected call order
 -------------------
@@ -21,10 +22,17 @@ Expected call order
 4. compute_erosivity(df)
    → df + columns: erosivity_EU [kJ m⁻² mm h⁻¹], erosivity_US [MJ mm ha⁻¹ h⁻¹]
 
-5. get_only_erosivity_events(df, imax_col, intensity_threshold, accum_threshold)
+5. get_only_erosivity_events(
+df, imax_col, intensity_threshold,
+accum_threshold
+)
    → df  filtered to erosive events only
 
-6. apply_rusle_split(df_erosivity, data_arr, dates_arr, time_resolution)  [optional]
+6. [optional]
+apply_rusle_split (
+    df_erosivity, data_arr, dates_arr, time_resolution
+    )
+
    → df  after Renard 1.27 mm / 6 h sub-storm splitting and re-filtering
 
 Zero values below the drizzle threshold (e.g. data[data < min_rain] = 0) BEFORE
@@ -34,8 +42,12 @@ import pandas as pd
 import numpy as np
 from packaging.version import parse
 
+
 def remove_incomplete_years(
-    data_pr, name_col='value', nan_to_zero=True, tolerance=0.1
+    data_pr,
+    name_col='value',
+    nan_to_zero=True,
+    tolerance=0.1
 ):
     """
     Remove years with too many missing values from a precipitation time series.
@@ -49,7 +61,8 @@ def remove_incomplete_years(
     nan_to_zero : bool, optional
         Replace remaining NaNs with 0 after filtering. Default True.
     tolerance : float, optional
-        Maximum allowed fraction of missing values per year [0–1]. Default 0.1 (10%).
+        Maximum allowed fraction of missing values per year [0–1].
+        Default 0.1 (10%).
 
     Returns
     -------
@@ -244,7 +257,11 @@ def get_events(
     return arr_dates
 
 
-def remove_short(list_events: list, time_resolution=None, min_ev_dur=None):
+def remove_short(
+        list_events: list, 
+        time_resolution=None, 
+        min_ev_dur=None
+        ):
     """
     Remove precipitation events shorter than a minimum duration.
 
@@ -311,7 +328,10 @@ def remove_short(list_events: list, time_resolution=None, min_ev_dur=None):
 
 
 def get_events_values(
-    data, dates, arr_dates_oe, time_resolution=None, formula='rogler',
+    data, dates,
+    arr_dates_oe,
+    time_resolution=None,
+    formula='rogler',
 ):
     """
     Compute per-event metrics for all accumulation windows supported by
@@ -364,12 +384,14 @@ def get_events_values(
                            per time step using E_kin_i_Rogler() or the
                            chosen formula; passed to
                            compute_erosivity() to compute EI30
-            imax_5       : peak 5-min intensity [mm/h]   — if resolution <= 5 min
-            imax_10      : peak 10-min intensity [mm/h]  — if resolution <= 10 min
+            imax_5       : peak 5-min intensity [mm/h] if resolution <= 5 min
+            imax_10      : peak 10-min intensity [mm/h] if resolution <= 10 min
                            and 10 % resolution == 0
-            imax_15      : peak 15-min intensity [mm/h]  — if resolution <= 15 min
+            used for criterion (ii)
+            imax_15      : peak 15-min intensity [mm/h] if resolution <= 15 min
                            and 15 % resolution == 0
-            imax_30      : peak 30-min intensity [mm/h]  — used for criterion (ii) when imax_15 unavailable
+            used for criterion (ii) when imax_15 unavailable
+            imax_30      : peak 30-min intensity [mm/h]
             imax_60      : peak 60-min intensity [mm/h]
         Columns for windows not supported by the resolution are absent.
         event_duration is always present regardless of resolution.
@@ -943,7 +965,8 @@ def get_mean_annual_stats(
 
 def find_optimal_thr_imax30(
     df_all_events, target_mean_annual,
-    imax_col='imax_30', use_both_thresholds=False,
+    imax_col='imax_30', 
+    use_both_thresholds=False,
 ):
     """
     Find the intensity threshold that minimises the difference between the
@@ -953,7 +976,8 @@ def find_optimal_thr_imax30(
     averaging over all years present in df_all_events (years with zero events
     are included via reindex so the denominator is always the full record
     length). The objective is a step function of the threshold, so the global
-    minimum is found by evaluating it at every unique imax_col value (O(n log n)).
+    minimum is found by evaluating it at every unique
+    imax_col value (O(n log n)).
 
     Typical use: match the mean annual count of 60-min erosivity events to
     the mean annual count of 5-min erosivity events by tuning thr_imax30.
@@ -1119,6 +1143,16 @@ def compute_sf_annual_r(
     r_target : pd.Series
         Annual R-factor of target indexed by year.
     """
+    years_ref = set(df_ref['event_start'].dt.year.unique())
+    years_tgt = set(df_target['event_start'].dt.year.unique())
+    if years_ref != years_tgt:
+        only_ref = sorted(years_ref - years_tgt)
+        only_tgt = sorted(years_tgt - years_ref)
+        raise ValueError(
+            "df_ref and df_target do not cover the same years. "
+            f"Only in ref: {only_ref}. Only in target: {only_tgt}."
+        )
+
     def _annual(df):
         years = df['event_start'].dt.year
         s = df.groupby(years)[ei30_col].sum()
@@ -1128,6 +1162,67 @@ def compute_sf_annual_r(
 
     r_ref = _annual(df_ref)
     r_target = _annual(df_target)
+    if r_target.mean() == 0:
+        raise ValueError(
+            "Target mean annual R is zero. Cannot compute SF."
+        )
+    sf = float(r_ref.mean() / r_target.mean())
+    return sf, r_ref, r_target
+
+
+def compute_sf_clim(
+    df_ref, df_target,
+    ei30_col='erosivity_US',
+    all_years_ref=None,
+    all_years_target=None,
+):
+    """
+    Compute scaling factor (SF) from climatological mean annual R-factors.
+
+    Intended for datasets that do not cover the same calendar years —
+    e.g. 30 years of station observations vs 20 years of climate model
+    output. Each dataset's mean annual R is computed independently over
+    its own period; SF is the ratio of those two means.
+
+    Unlike compute_sf_annual_r, no year-matching is performed and no
+    error is raised when the two datasets cover different years.
+
+    Parameters
+    ----------
+    df_ref : pd.DataFrame
+        Reference erosivity events (e.g. observations). Must contain
+        'event_start' and ei30_col.
+    df_target : pd.DataFrame
+        Target erosivity events to correct (e.g. climate model).
+    ei30_col : str, optional
+        Erosivity column. Default 'erosivity_US'.
+    all_years_ref : list of int, optional
+        Full year list for the reference period. Years with zero erosive
+        events are included (fill_value=0) so the denominator equals the
+        record length. If None, only years present in df_ref are used.
+    all_years_target : list of int, optional
+        Full year list for the target period. Same logic as all_years_ref
+        applied independently to df_target.
+
+    Returns
+    -------
+    sf : float
+        Scaling factor = mean(R_ref) / mean(R_target).
+        Greater than 1 when the target underestimates the reference.
+    r_ref : pd.Series
+        Annual R-factor of the reference indexed by year.
+    r_target : pd.Series
+        Annual R-factor of the target indexed by year.
+    """
+    def _annual(df, all_years):
+        years = df['event_start'].dt.year
+        s = df.groupby(years)[ei30_col].sum()
+        if all_years is not None:
+            s = s.reindex(all_years, fill_value=0)
+        return s
+
+    r_ref = _annual(df_ref, all_years_ref)
+    r_target = _annual(df_target, all_years_target)
     if r_target.mean() == 0:
         raise ValueError(
             "Target mean annual R is zero. Cannot compute SF."
@@ -1146,6 +1241,10 @@ def compute_sf_per_event(
     Events are matched by event_start date. Only events present in
     both datasets (inner join on date) are used. SF is the ratio of
     mean matched EI values: SF = mean(EI_ref) / mean(EI_target).
+
+    Both DataFrames must cover the same period and station. A
+    ValueError is raised if fewer than 50 % of the smaller dataset's
+    events find a match, which indicates mismatched datasets.
 
     Parameters
     ----------
@@ -1182,6 +1281,20 @@ def compute_sf_per_event(
         ),
         on='_date', how='inner',
     )
+    n_matched = len(merged)
+    n_smaller = min(len(df_ref), len(df_target))
+    match_rate = n_matched / n_smaller if n_smaller > 0 else 0.0
+    if n_matched == 0:
+        raise ValueError(
+            "No events matched between df_ref and df_target. "
+            "The two datasets must cover the same period and station."
+        )
+    if match_rate < 0.5:
+        raise ValueError(
+            f"Only {n_matched}/{n_smaller} events matched "
+            f"({match_rate:.0%}). df_ref and df_target appear to be "
+            f"from different periods or stations. Expected >= 50% match."
+        )
     if merged['_ei_tgt'].mean() == 0:
         raise ValueError(
             "Target mean EI is zero. Cannot compute SF."

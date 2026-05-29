@@ -28,7 +28,7 @@ from pyErosivity import (
     compute_erosivity,
     get_only_erosivity_events,
     find_optimal_thr_imax30,
-    compute_sf_annual_r,
+    compute_sf_clim,
     get_mean_annual_stats,
     bootstrapping_erosivity_60min,
     bootstrapping_erosivity_CPM_60min,
@@ -178,8 +178,9 @@ df_obs_raw = get_only_erosivity_events(
     accum_threshold=accum_threshold,
     use_both_thresholds=use_both,
 )
-sf, _, r_obs_annual = compute_sf_annual_r(
-    df_ref, df_obs_raw, all_years=all_years_obs
+sf, _, r_obs_annual = compute_sf_clim(
+    df_ref, df_obs_raw,
+    all_years_ref=all_years_ref, all_years_target=all_years_obs,
 )
 
 df_obs = df_obs_raw.copy()
@@ -303,8 +304,9 @@ df_cpm_own_raw = get_only_erosivity_events(
 )
 
 # SF computed against 5-min OBS reference over the CPM year range
-sf_cpm, _, r_cpm_own_annual = compute_sf_annual_r(
-    df_ref, df_cpm_own_raw, all_years=all_years_cpm
+sf_cpm, _, r_cpm_own_annual = compute_sf_clim(
+    df_ref, df_cpm_own_raw,
+    all_years_ref=all_years_ref, all_years_target=all_years_cpm,
 )
 
 df_cpm_own = df_cpm_own_raw.copy()

@@ -40,6 +40,7 @@ from pyErosivity import (
     find_optimal_thr_imax30,
     compute_sf_annual_r,
     compute_sf_per_event,
+    compute_sf_clim,
 )
 
 station_num = "VE_0091"
@@ -349,15 +350,37 @@ print(
 )
 
 
+# %% === STAGE 8b: SF-clim — climatological mean (non-matched periods) ===
+
+sf_clim_naive, r_ref_clim_n, r_naive_clim = compute_sf_clim(
+    df_ref, df_naive,
+    all_years_ref=all_years, all_years_target=all_years,
+)
+sf_clim_opt, r_ref_clim_o, r_opt_clim = compute_sf_clim(
+    df_ref, df_opt,
+    all_years_ref=all_years, all_years_target=all_years,
+)
+
+print(
+    f"\nSF-clim naive   | {sf_clim_naive:.4f} "
+    f"| R corrected: {naive_rfactor * sf_clim_naive:.1f} MJ*mm/ha/h/yr"
+)
+print(
+    f"SF-clim opt     | {sf_clim_opt:.4f} "
+    f"| R corrected: {opt_rfactor * sf_clim_opt:.1f} MJ*mm/ha/h/yr"
+)
+
+
 # %% === STAGE 9: Plot — SF scatter figures (fig2) ===
 
-fig_sf, axs = plt.subplots(2, 2, figsize=(12, 10))
+fig_sf, axs = plt.subplots(3, 2, figsize=(12, 15))
 
-# --- Row 0: annual R-factor scatter ---
 titles_r = [
     f'Naive (IMax60 >= {thr_imax60_naive} mm/h)',
     f'Calibrated (IMax60 >= {thr_opt:.2f} mm/h)',
 ]
+
+# --- Row 0: SF-R — annual R-factor scatter ---
 datasets_r = [
     (r_ref_annual, r_naive_annual, sf_r_naive),
     (r_ref_annual, r_opt_annual, sf_r_opt),
@@ -371,7 +394,19 @@ for col, (r_ref_s, r_tgt_s, sf) in enumerate(datasets_r):
     ax.plot(xline, xline, color='grey', linestyle='--',
             linewidth=0.9, label='1:1')
     ax.plot(xline, xline / sf, color='tomato', linewidth=1.5,
-            label=f'SF = {sf:.3f}')
+            linestyle='--')
+    x_arr = lim * 0.6
+    ax.annotate(
+        '',
+        xy=(x_arr, x_arr),
+        xytext=(x_arr, x_arr / sf),
+        arrowprops=dict(arrowstyle='<->', color='tomato', lw=1.5),
+    )
+    ax.text(
+        x_arr * 1.03, (x_arr + x_arr / sf) / 2,
+        f'SF = {sf:.3f}',
+        color='tomato', fontsize=9, va='center',
+    )
     ax.set_xlim(0, lim)
     ax.set_ylim(0, lim)
     ax.set_xlabel('Annual R — 5 min ref [MJ*mm/ha/h/yr]')
@@ -380,7 +415,7 @@ for col, (r_ref_s, r_tgt_s, sf) in enumerate(datasets_r):
     ax.legend(fontsize=9)
     ax.grid(True, alpha=0.35)
 
-# --- Row 1: per-event EI scatter ---
+# --- Row 1: SF-EI — per-event EI scatter ---
 titles_ei = [
     f'Naive (IMax60 >= {thr_imax60_naive} mm/h) | {n_naive} events',
     f'Calibrated (IMax60 >= {thr_opt:.2f} mm/h) | {n_opt} events',
@@ -399,7 +434,19 @@ for col, (ei_ref_s, ei_tgt_s, sf) in enumerate(datasets_ei):
     ax.plot(xline, xline, color='grey', linestyle='--',
             linewidth=0.9, label='1:1')
     ax.plot(xline, xline / sf, color='tomato', linewidth=1.5,
-            label=f'SF = {sf:.3f}')
+            linestyle='--')
+    x_arr = lim * 0.6
+    ax.annotate(
+        '',
+        xy=(x_arr, x_arr),
+        xytext=(x_arr, x_arr / sf),
+        arrowprops=dict(arrowstyle='<->', color='tomato', lw=1.5),
+    )
+    ax.text(
+        x_arr * 1.03, (x_arr + x_arr / sf) / 2,
+        f'SF = {sf:.3f}',
+        color='tomato', fontsize=9, va='center',
+    )
     ax.set_xlim(0, lim)
     ax.set_ylim(0, lim)
     ax.set_xlabel('EI — 5 min ref [MJ*mm/ha/h]')
@@ -408,9 +455,45 @@ for col, (ei_ref_s, ei_tgt_s, sf) in enumerate(datasets_ei):
     ax.legend(fontsize=9)
     ax.grid(True, alpha=0.35)
 
+# --- Row 2: SF-clim — climatological mean annual R scatter ---
+datasets_clim = [
+    (r_ref_clim_n, r_naive_clim, sf_clim_naive),
+    (r_ref_clim_o, r_opt_clim, sf_clim_opt),
+]
+
+for col, (r_ref_s, r_tgt_s, sf) in enumerate(datasets_clim):
+    ax = axs[2, col]
+    ax.scatter(r_ref_s, r_tgt_s, color='darkorange', s=40, zorder=3)
+    lim = max(r_ref_s.max(), r_tgt_s.max()) * 1.08
+    xline = np.linspace(0, lim, 100)
+    ax.plot(xline, xline, color='grey', linestyle='--',
+            linewidth=0.9, label='1:1')
+    ax.plot(xline, xline / sf, color='tomato', linewidth=1.5,
+            linestyle='--')
+    x_arr = lim * 0.6
+    ax.annotate(
+        '',
+        xy=(x_arr, x_arr),
+        xytext=(x_arr, x_arr / sf),
+        arrowprops=dict(arrowstyle='<->', color='tomato', lw=1.5),
+    )
+    ax.text(
+        x_arr * 1.03, (x_arr + x_arr / sf) / 2,
+        f'SF = {sf:.3f}',
+        color='tomato', fontsize=9, va='center',
+    )
+    ax.set_xlim(0, lim)
+    ax.set_ylim(0, lim)
+    ax.set_xlabel('Annual R — 5 min ref [MJ*mm/ha/h/yr]')
+    ax.set_ylabel('Annual R — 60 min [MJ*mm/ha/h/yr]')
+    ax.set_title(f'SF-clim | {titles_r[col]}', fontsize=10)
+    ax.legend(fontsize=9)
+    ax.grid(True, alpha=0.35)
+
 plt.suptitle(
-    f'{station_num} - Scaling factor approaches: annual R (top) '
-    f'vs per-event EI (bottom)',
+    f'{station_num} - Scaling factor approaches:\n'
+    f'SF-R (annual R, top) | SF-EI (per-event, mid) '
+    f'| SF-clim (climatol. mean, bottom)',
     fontsize=11,
 )
 plt.tight_layout()
@@ -442,6 +525,10 @@ r_opt_after_sfei = float(
     .reindex(all_years, fill_value=0).mean()
 )
 
+# Mean annual R after SF-clim correction
+r_naive_after_sfclim = float((r_naive_clim * sf_clim_naive).mean())
+r_opt_after_sfclim = float((r_opt_clim * sf_clim_opt).mean())
+
 
 def _panel(ax, x, y, title, xlabel, ylabel, note, color):
     lim = max(x.max(), y.max()) * 1.1
@@ -465,7 +552,7 @@ def _panel(ax, x, y, title, xlabel, ylabel, note, color):
     )
 
 
-fig3, axes3 = plt.subplots(2, 4, figsize=(26, 13))
+fig3, axes3 = plt.subplots(3, 4, figsize=(26, 19))
 plt.subplots_adjust(
     left=0.05, right=0.99, top=0.88, bottom=0.08,
     wspace=0.52, hspace=0.52,
@@ -539,6 +626,40 @@ _panel(
     color='mediumpurple',
 )
 
+# --- Row 2: SF-clim — climatological mean annual R ---
+_panel(
+    axes3[2, 0], r_ref_clim_n, r_naive_clim,
+    title=f'BEFORE | Naive\nIMax60 >= {thr_imax60_naive} mm/h',
+    xlabel='R ref 5 min [MJ*mm/ha/h/yr]',
+    ylabel='R target 60 min [MJ*mm/ha/h/yr]',
+    note=f'Mean annual R\n= {naive_rfactor:.0f} MJ*mm/ha/h/yr',
+    color='darkorange',
+)
+_panel(
+    axes3[2, 1], r_ref_clim_n, r_naive_clim * sf_clim_naive,
+    title=f'AFTER | SF-clim = {sf_clim_naive:.3f}',
+    xlabel='R ref 5 min [MJ*mm/ha/h/yr]',
+    ylabel='R corrected 60 min [MJ*mm/ha/h/yr]',
+    note=f'Mean annual R\n= {r_naive_after_sfclim:.0f} MJ*mm/ha/h/yr',
+    color='darkorange',
+)
+_panel(
+    axes3[2, 2], r_ref_clim_o, r_opt_clim,
+    title=f'BEFORE | Calibrated\nIMax60 >= {thr_opt:.2f} mm/h',
+    xlabel='R ref 5 min [MJ*mm/ha/h/yr]',
+    ylabel='R target 60 min [MJ*mm/ha/h/yr]',
+    note=f'Mean annual R\n= {opt_rfactor:.0f} MJ*mm/ha/h/yr',
+    color='darkorange',
+)
+_panel(
+    axes3[2, 3], r_ref_clim_o, r_opt_clim * sf_clim_opt,
+    title=f'AFTER | SF-clim = {sf_clim_opt:.3f}',
+    xlabel='R ref 5 min [MJ*mm/ha/h/yr]',
+    ylabel='R corrected 60 min [MJ*mm/ha/h/yr]',
+    note=f'Mean annual R\n= {r_opt_after_sfclim:.0f} MJ*mm/ha/h/yr',
+    color='darkorange',
+)
+
 # Reference R annotated on every panel for comparison
 for ax in axes3.flat:
     ax.text(
@@ -549,9 +670,11 @@ for ax in axes3.flat:
     )
 
 # Row labels on left margin
-for row, label in enumerate(
-    ['SF-R  (annual R-factor)', 'SF-EI  (per-event EI)']
-):
+for row, label in enumerate([
+    'SF-R  (annual R-factor)',
+    'SF-EI  (per-event EI)',
+    'SF-clim  (climatol. mean)',
+]):
     axes3[row, 0].set_ylabel(
         f'{label}\n\n{axes3[row, 0].get_ylabel()}',
         fontsize=FONT_LABEL,
@@ -563,7 +686,7 @@ ax_bg.set_xlim(0, 1)
 ax_bg.set_ylim(0, 1)
 ax_bg.axis('off')
 
-for row in range(2):
+for row in range(3):
     for col_l in [0, 2]:
         pos_l = axes3[row, col_l].get_position()
         pos_r = axes3[row, col_l + 1].get_position()
@@ -580,8 +703,9 @@ for row in range(2):
 
 plt.suptitle(
     f'{station_num} — Before / after scaling factor correction\n'
-    f'Top row: SF-R applied to annual R  |  '
-    f'Bottom row: SF-EI applied to per-event EI',
+    f'Row 1: SF-R (annual R)  |  '
+    f'Row 2: SF-EI (per-event EI)  |  '
+    f'Row 3: SF-clim (climatol. mean)',
     fontsize=16, fontweight='bold',
 )
 if save_results:
