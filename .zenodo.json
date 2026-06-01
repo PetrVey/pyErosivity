@@ -1,0 +1,37 @@
+{
+  "title": "PetrVey/pyErosivity",
+  "description": "<p>Python package for computing rainfall erosivity (R-factor / EI30) from precipitation time series at any temporal resolution.</p><p><strong>Source code and installation:</strong> <a href=\"https://github.com/PetrVey/pyErosivity/\">https://github.com/PetrVey/pyErosivity/</a><br>Install in editable mode: <code>pip install -e .</code></p><p><strong>What it does:</strong> pyErosivity implements the full pipeline from raw precipitation data to per-event and annual erosivity statistics, as required by the USLE/RUSLE family of soil erosion models:<ul><li>Storm separation by minimum dry-spell duration (Wischmeier &amp; Smith 1978)</li><li>Per-event kinetic energy integration (DIN 19708 / Rogler &amp; Schwertmann 1981; Brown &amp; Foster 1987; McGregor et al. 1995) and peak intensity via sliding-window convolution</li><li>Erosivity event filtering using the Wischmeier dual criterion (IMax15 &ge; 25.4 mm/h OR accumulated depth &ge; 12.7 mm); alternative IMax30 formulation also supported</li><li>Optional Renard et al. (1997) within-storm splitting rule</li><li>Threshold calibration for coarser temporal resolutions (Fischer et al. 2018), correcting the underestimation of peak intensities at hourly resolution</li><li>Three scaling factor approaches: annual R-factor (SF-R), per-event EI (SF-EI), and climatological mean (SF-clim) for datasets covering different calendar periods</li><li>Bootstrap uncertainty estimation for annual erosivity, with support for shared sample indices across climate model ensembles</li></ul></p><p>Supports both European (DIN 19708) and US (RUSLE) erosivity standards. Cite all versions using DOI <a href=\"https://doi.org/10.5281/zenodo.20485889\">10.5281/zenodo.20485889</a>.</p>",
+  "license": "MIT",
+  "upload_type": "software",
+  "creators": [
+    {
+      "name": "Vohnicky, Petr",
+      "affiliation": "University of Padova",
+      "orcid": "0000-0001-9812-4359"
+    }
+  ],
+  "related_identifiers": [
+    {
+      "identifier": "https://github.com/PetrVey/pyErosivity/",
+      "relation": "isIdenticalTo",
+      "scheme": "url"
+    },
+    {
+      "identifier": "10.5281/zenodo.20485889",
+      "relation": "isVersionOf",
+      "scheme": "doi"
+    }
+  ],
+  "keywords": [
+    "rainfall erosivity",
+    "R-factor",
+    "EI30",
+    "RUSLE",
+    "soil erosion",
+    "precipitation",
+    "kinetic energy",
+    "temporal resolution",
+    "climate model",
+    "bootstrap"
+  ]
+}
