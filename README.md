@@ -353,3 +353,7 @@ Key observations:
 
 - Dallan, E., Marra, F., Fosser, G., Marani, M., Formetta, G., Schär, C., and Borga, M. (2023). How well does a convection-permitting regional climate model represent the reverse orographic effect of extreme hourly precipitation? *Hydrol. Earth Syst. Sci.*, 27, 1133–1149. https://doi.org/10.5194/hess-27-1133-2023
 - Dallan, E., Borga, M., Fosser, G., Canale, A., Roghani, B., Marani, M., & Marra, F. (2024). A method to assess and explain changes in sub-daily precipitation return levels from convection-permitting simulations. *Water Resources Research*, 60, e2023WR035969. https://doi.org/10.1029/2023WR035969
+
+## Acknowledgements
+
+Supported by the European Union's Horizon 2020 research and innovation programme under the Marie Skłodowska-Curie grant agreement No 101034319 and from the European Union – NextGenerationEU.

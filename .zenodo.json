@@ -22,6 +22,11 @@
       "scheme": "doi"
     }
   ],
+  "grants": [
+    {
+      "id": "10.13039/501100000780::101034319"
+    }
+  ],
   "keywords": [
     "rainfall erosivity",
     "R-factor",
