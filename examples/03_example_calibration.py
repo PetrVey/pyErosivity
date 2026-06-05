@@ -59,6 +59,9 @@ thr_imax15 = 25.4       # Standard IMax15 threshold [mm/h]
 thr_imax60_naive = 12.7  # Naive IMax60 threshold — same value, wider window
 accum_threshold = 12.7  # Minimum event depth for depth criterion [mm]
 use_both = True         # Dual criterion: intensity OR depth
+
+slice_year_from = "1990"  # Start year (inclusive)
+slice_year_to = "2020"    # End year (inclusive)
 # == # == # SETTINGS # == # == # SETTINGS # == #
 # == # == # == # == # == # == # == # == # == # ==
 
@@ -75,6 +78,7 @@ COLORS = {
 data = pd.read_parquet(f"res/{station_num}_5min_newflag.parguqet.gzip")
 data['time'] = pd.to_datetime(data['time'])
 data = data.set_index('time')
+data = data.loc[slice_year_from:slice_year_to]
 
 data.loc[data['flag'] > 0, name_col] = np.nan
 data.loc[data[name_col] < min_rain, name_col] = 0
